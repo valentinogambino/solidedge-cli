@@ -1,0 +1,14 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  ci:
+    # devenv debe permitir acceso a repos del usuario (access_level: user).
+    uses: valentinogambino/devenv/.github/workflows/ci-proyecto.yml@main
+    with:
+      python: '3.14'
