@@ -56,6 +56,7 @@ ESCRITURAS = frozenset(
         "SaveAs",
         "SaveCopyAs",
         "View.SaveAsImage",
+        "SaveAsFlatDXFEx",
         "ModelLinks.Add",
         "SheetSetup.SheetSizeOption=",
         "DrawingViews.AddPartView",
@@ -110,6 +111,8 @@ class DocumentoFalso(_ConFallos):
         # "vacio" lo deja en 0 bytes.
         self.modo_exportacion = "escribir"
         self.Windows = ColeccionFalsa([VentanaFalsa(self)])
+        if tipo == 4:
+            con_chapa(self)
         if tipo == 2:
             self.ModelLinks = EnlacesFalsos(self)
             self.ActiveSheet = HojaFalsa(self)
@@ -473,6 +476,31 @@ def calcular_fisicas(objeto: Any, **kwargs: Any) -> tuple:
     return (volumen, area, volumen * kwargs["Density"], *resto, 0.99, 0)
 
 
+class ModelosDeChapaFalsos(ColeccionFalsa):
+    """`Models` de una chapa: suma `SaveAsFlatDXFEx` (desarrollo a DXF)."""
+
+    def __init__(self, doc: DocumentoFalso) -> None:
+        super().__init__([])
+        self.doc = doc
+
+    def SaveAsFlatDXFEx(self, ruta, cara, arista, vertice, usar_desarrollo) -> None:
+        self.doc.registro.append(
+            ("SaveAsFlatDXFEx", self.doc.Name, ruta, cara, arista, vertice, usar_desarrollo)
+        )
+        self.doc._tocar("SaveAsFlatDXFEx")
+        if self.doc.modo_exportacion == "escribir":
+            with open(ruta, "wb") as archivo:
+                archivo.write(b"dxf-plano")
+        elif self.doc.modo_exportacion == "vacio":
+            open(ruta, "wb").close()
+
+
+def con_chapa(doc: DocumentoFalso, con_desarrollo: bool = True) -> None:
+    """Dejale a una chapa su `Models` con `SaveAsFlatDXFEx` y, o no, un flat pattern."""
+    doc.Models = ModelosDeChapaFalsos(doc)
+    doc.FlatPatternModels = ColeccionFalsa([object()] if con_desarrollo else [])
+
+
 class CuerpoFalso:
     """`Model.Body`: `GetRange` devuelve `(minimo, maximo)` o falla si no hay caja."""
 
@@ -614,6 +642,8 @@ class DocumentosFalsos(_ConFallos):
             nombre, ruta=ruta, tipo=TIPO_POR_EXTENSION.get(extension, 1), solo_lectura=flags == 1
         )
         doc.modo_exportacion = config.get("modo_exportacion", "escribir")
+        if "desarrollo" in config:
+            con_chapa(doc, config["desarrollo"])
         if "caja" in config:
             doc.Models = ColeccionFalsa([ModeloFalso(doc, caja=config["caja"])])
         return self._agregar(doc)
