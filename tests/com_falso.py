@@ -54,6 +54,7 @@ ESCRITURAS = frozenset(
         "Documents.Open",
         "Save",
         "SaveAs",
+        "SaveCopyAs",
         "Close",
         "Quit",
         "Dirty=",
@@ -99,6 +100,9 @@ class DocumentoFalso(_ConFallos):
         self.DesignEdgebarFeatures = ColeccionFalsa([])
         self.fisicas_de_usuario: tuple | None = None
         self.fisicas = FISICAS_POR_DEFECTO
+        # Exportación (F4): "escribir" deja un archivo con contenido, "nada" no escribe y
+        # "vacio" lo deja en 0 bytes.
+        self.modo_exportacion = "escribir"
 
     def GetUserPhysicalProperties(self) -> tuple:
         """Sin propiedades guardadas la llamada real falla (E_FAIL)."""
@@ -135,6 +139,16 @@ class DocumentoFalso(_ConFallos):
         self.FullName = ruta
         self.Name = ruta.replace("\\", "/").rsplit("/", 1)[-1]
         self._sucio = False
+
+    def SaveCopyAs(self, ruta: str) -> None:
+        """Exporta por extensión sin reapuntar el documento (como la API real)."""
+        self.registro.append(("SaveCopyAs", self.Name, ruta))
+        self._tocar("SaveCopyAs")
+        if self.modo_exportacion == "escribir":
+            with open(ruta, "wb") as archivo:
+                archivo.write(b"exportado")
+        elif self.modo_exportacion == "vacio":
+            open(ruta, "wb").close()
 
     def Close(self, guardar: bool = False) -> None:
         self.registro.append(("Close", self.Name, guardar))

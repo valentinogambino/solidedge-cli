@@ -134,6 +134,11 @@ def _ruta_de(doc: Any) -> str | None:
     return texto if os.path.isabs(texto) else None
 
 
+def ruta_de(doc: Any) -> str | None:
+    """Ruta completa del documento, o None si nunca se guardó."""
+    return _ruta_de(doc)
+
+
 def _clave(doc: Any) -> tuple[str, str]:
     return (
         os.path.normcase(str(_leer(lambda: doc.FullName) or "")),
@@ -485,6 +490,7 @@ __all__ = [
     "nuevo",
     "resolver",
     "ruta_absoluta",
+    "ruta_de",
     "salir",
     "validar_destino",
     "validar_ruta_existente",
