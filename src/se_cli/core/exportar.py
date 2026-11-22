@@ -187,7 +187,7 @@ def salida_individual(formato: Formato, origen: str | None, out: str | None) -> 
 # --- Escritura -------------------------------------------------------------------------------
 
 
-def _verificar(ruta: str) -> int:
+def verificar_archivo(ruta: str) -> int:
     """Tamaño del archivo escrito; sin archivo o vacío es un error."""
     if not os.path.isfile(ruta):
         raise ErrorCom(f"Solid Edge no escribió el archivo: {ruta}", details={"ruta": ruta})
@@ -216,7 +216,7 @@ def escribir(doc: Any, formato: Formato, ruta: str, sobrescribir: bool) -> int:
         os.replace(ruta, apartado)
     try:
         formato.exportar(doc, ruta)
-        tamano = _verificar(ruta)
+        tamano = verificar_archivo(ruta)
     except BaseException:
         with contextlib.suppress(OSError):
             if os.path.exists(ruta):
@@ -290,5 +290,6 @@ __all__ = [
     "nombre_de_salida",
     "salida_individual",
     "tipo_base",
+    "verificar_archivo",
     "ventana_activa",
 ]

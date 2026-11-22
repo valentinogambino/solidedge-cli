@@ -5,6 +5,7 @@ import typer
 from se_cli import __version__
 from se_cli.commands import (
     docs,
+    draft,
     ensamble,
     exportar,
     masa,
@@ -22,6 +23,7 @@ app.add_typer(variables.app, name="vars")
 app.add_typer(propiedades.app, name="props")
 app.add_typer(ensamble.app, name="asm")
 app.add_typer(operaciones.app, name="features")
+app.add_typer(draft.app, name="draft")
 masa.registrar(app)
 exportar.registrar(app)
 

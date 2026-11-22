@@ -56,6 +56,11 @@ ESCRITURAS = frozenset(
         "SaveAs",
         "SaveCopyAs",
         "View.SaveAsImage",
+        "ModelLinks.Add",
+        "SheetSetup.SheetSizeOption=",
+        "DrawingViews.AddPartView",
+        "DrawingViews.AddSheetMetalView",
+        "DrawingViews.AddAssemblyView",
         "Close",
         "Quit",
         "Dirty=",
@@ -105,6 +110,10 @@ class DocumentoFalso(_ConFallos):
         # "vacio" lo deja en 0 bytes.
         self.modo_exportacion = "escribir"
         self.Windows = ColeccionFalsa([VentanaFalsa(self)])
+        if tipo == 2:
+            self.ModelLinks = EnlacesFalsos(self)
+            self.ActiveSheet = HojaFalsa(self)
+            self.Sheets = ColeccionFalsa([self.ActiveSheet])
 
     def GetUserPhysicalProperties(self) -> tuple:
         """Sin propiedades guardadas la llamada real falla (E_FAIL)."""
@@ -164,6 +173,95 @@ class DocumentoFalso(_ConFallos):
         self._tocar("Activate")
         if self.coleccion is not None:
             self.coleccion.activo = self
+
+
+# Tamaños (ancho, alto) en metros de `PaperSizeConstants` ISO apaisados.
+PAPEL_ISO_APAISADO = {
+    27: (0.210, 0.148),
+    29: (0.297, 0.210),
+    31: (0.420, 0.297),
+    33: (0.594, 0.420),
+    35: (0.841, 0.594),
+    37: (1.189, 0.841),
+}
+
+
+class EnlaceFalso:
+    def __init__(self, ruta: str) -> None:
+        self.ruta = ruta
+
+
+class EnlacesFalsos:
+    """`Draft.ModelLinks`."""
+
+    def __init__(self, doc: DocumentoFalso) -> None:
+        self.doc = doc
+        self.enlaces: list[EnlaceFalso] = []
+
+    def Add(self, ruta: str) -> EnlaceFalso:
+        self.doc.registro.append(("ModelLinks.Add", ruta))
+        self.doc._tocar("ModelLinks.Add")
+        enlace = EnlaceFalso(ruta)
+        self.enlaces.append(enlace)
+        return enlace
+
+    @property
+    def Count(self) -> int:
+        return len(self.enlaces)
+
+
+class ConfiguracionDeHojaFalsa:
+    """`Sheet.SheetSetup`: arranca en A4 apaisada y `SheetSizeOption` cambia las medidas."""
+
+    def __init__(self, doc: DocumentoFalso) -> None:
+        self.doc = doc
+        self.SheetWidth, self.SheetHeight = 0.297, 0.210
+        self._opcion = 29
+
+    @property
+    def SheetSizeOption(self) -> int:
+        return self._opcion
+
+    @SheetSizeOption.setter
+    def SheetSizeOption(self, valor: int) -> None:
+        self.doc.registro.append(("SheetSetup.SheetSizeOption=", valor))
+        self.doc._tocar("SheetSizeOption")
+        self._opcion = valor
+        self.SheetWidth, self.SheetHeight = PAPEL_ISO_APAISADO[valor]
+
+
+class VistasDeDibujoFalsas(_ConFallos):
+    """`Sheet.DrawingViews`: registra orientación, escala y posición de cada vista."""
+
+    def __init__(self, doc: DocumentoFalso) -> None:
+        super().__init__()
+        self.doc = doc
+        self.vistas: list[tuple] = []
+
+    def _agregar(self, metodo: str, enlace, orientacion, escala, x, y, tipo) -> None:
+        llamada = (f"DrawingViews.{metodo}", enlace.ruta, orientacion, escala, x, y, tipo)
+        self.doc.registro.append(llamada)
+        self._tocar(metodo)
+        self.vistas.append(llamada[1:])
+
+    def AddPartView(self, enlace, orientacion, escala, x, y, tipo=0) -> None:
+        self._agregar("AddPartView", enlace, orientacion, escala, x, y, tipo)
+
+    def AddSheetMetalView(self, enlace, orientacion, escala, x, y, tipo=0) -> None:
+        self._agregar("AddSheetMetalView", enlace, orientacion, escala, x, y, tipo)
+
+    def AddAssemblyView(self, enlace, orientacion, escala, x, y, tipo=0) -> None:
+        self._agregar("AddAssemblyView", enlace, orientacion, escala, x, y, tipo)
+
+    @property
+    def Count(self) -> int:
+        return len(self.vistas)
+
+
+class HojaFalsa:
+    def __init__(self, doc: DocumentoFalso) -> None:
+        self.SheetSetup = ConfiguracionDeHojaFalsa(doc)
+        self.DrawingViews = VistasDeDibujoFalsas(doc)
 
 
 class VistaFalsa:
@@ -375,12 +473,25 @@ def calcular_fisicas(objeto: Any, **kwargs: Any) -> tuple:
     return (volumen, area, volumen * kwargs["Density"], *resto, 0.99, 0)
 
 
+class CuerpoFalso:
+    """`Model.Body`: `GetRange` devuelve `(minimo, maximo)` o falla si no hay caja."""
+
+    def __init__(self, caja=None) -> None:
+        self.caja = caja
+
+    def GetRange(self, minimo, maximo):
+        if self.caja is None:
+            raise com_error(0x80004005, "Error no especificado")
+        return self.caja
+
+
 class ModeloFalso:
     """`Model` de una pieza: colección de features y cálculo de propiedades físicas."""
 
-    def __init__(self, doc: DocumentoFalso, features: list | None = None) -> None:
+    def __init__(self, doc: DocumentoFalso, features: list | None = None, caja=None) -> None:
         self.doc = doc
         self.Features = ColeccionFalsa(features)
+        self.Body = CuerpoFalso(caja)
 
     def ComputePhysicalPropertiesWithSpecifiedDensity(self, **kwargs: Any) -> tuple:
         return calcular_fisicas(self, **kwargs)
@@ -419,7 +530,9 @@ class OcurrenciaFalsa:
         *,
         visible: bool = True,
         hijos: list[OcurrenciaFalsa] | None = None,
+        caja=None,
     ) -> None:
+        self.caja = caja
         self.Name = nombre
         self.OccurrenceFileName = archivo
         self.Visible = visible
@@ -428,6 +541,21 @@ class OcurrenciaFalsa:
 
 
 TIPO_POR_EXTENSION = {"par": 1, "dft": 2, "asm": 3, "psm": 4}
+TIPO_POR_PROGID = {
+    "SolidEdge.PartDocument": 1,
+    "SolidEdge.DraftDocument": 2,
+    "SolidEdge.AssemblyDocument": 3,
+    "SolidEdge.SheetMetalDocument": 4,
+}
+
+
+def _caja_de_ocurrencia(self, minimo, maximo):
+    if self.caja is None:
+        raise com_error(0x80004005, "Error no especificado")
+    return self.caja
+
+
+OcurrenciaFalsa.GetRangeBox = _caja_de_ocurrencia
 
 
 class DocumentosFalsos(_ConFallos):
@@ -438,7 +566,7 @@ class DocumentosFalsos(_ConFallos):
         self.registro = registro if registro is not None else []
         self._documentos = list(documentos or [])
         # Configuración por nombre de archivo para los documentos que abre `Open`:
-        # {"error": excepción} o {"modo_exportacion": "nada" | "vacio"}.
+        # {"error": excepción}, {"modo_exportacion": "nada" | "vacio"} o {"caja": (min, max)}.
         self.al_abrir: dict[str, dict[str, Any]] = {}
         for documento in self._documentos:
             documento.registro = self.registro
@@ -469,7 +597,10 @@ class DocumentosFalsos(_ConFallos):
     def Add(self, prog_id: str) -> DocumentoFalso:
         self.registro.append(("Documents.Add", prog_id))
         self._tocar("Add")
-        return self._agregar(DocumentoFalso(f"Document{len(self._documentos) + 1}"))
+        tipo = TIPO_POR_PROGID.get(prog_id)
+        if tipo is None:
+            tipo = TIPO_POR_EXTENSION.get(prog_id.rsplit(".", 1)[-1].lower(), 1)
+        return self._agregar(DocumentoFalso(f"Document{len(self._documentos) + 1}", tipo=tipo))
 
     def Open(self, ruta: str, flags: int | None = None) -> DocumentoFalso:
         self.registro.append(("Documents.Open", ruta, flags))
@@ -483,6 +614,8 @@ class DocumentosFalsos(_ConFallos):
             nombre, ruta=ruta, tipo=TIPO_POR_EXTENSION.get(extension, 1), solo_lectura=flags == 1
         )
         doc.modo_exportacion = config.get("modo_exportacion", "escribir")
+        if "caja" in config:
+            doc.Models = ColeccionFalsa([ModeloFalso(doc, caja=config["caja"])])
         return self._agregar(doc)
 
 

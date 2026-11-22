@@ -153,6 +153,11 @@ def buscar_abierto(app: Any, ruta: str) -> Any | None:
     return None
 
 
+def guardar_en(doc: Any, absoluta: str) -> None:
+    """`SaveAs` de `doc` a `absoluta`, apartando un archivo previo y restaurándolo si falla."""
+    _guardar_en(doc, absoluta)
+
+
 def ruta_de(doc: Any) -> str | None:
     """Ruta completa del documento, o None si nunca se guardó."""
     return _ruta_de(doc)
@@ -506,6 +511,7 @@ __all__ = [
     "estado",
     "guardar",
     "guardar_como",
+    "guardar_en",
     "listar",
     "nombre_de_tipo",
     "nuevo",
