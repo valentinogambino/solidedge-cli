@@ -55,6 +55,7 @@ ESCRITURAS = frozenset(
         "Save",
         "SaveAs",
         "SaveCopyAs",
+        "View.SaveAsImage",
         "Close",
         "Quit",
         "Dirty=",
@@ -103,6 +104,7 @@ class DocumentoFalso(_ConFallos):
         # Exportación (F4): "escribir" deja un archivo con contenido, "nada" no escribe y
         # "vacio" lo deja en 0 bytes.
         self.modo_exportacion = "escribir"
+        self.Windows = ColeccionFalsa([VentanaFalsa(self)])
 
     def GetUserPhysicalProperties(self) -> tuple:
         """Sin propiedades guardadas la llamada real falla (E_FAIL)."""
@@ -162,6 +164,27 @@ class DocumentoFalso(_ConFallos):
         self._tocar("Activate")
         if self.coleccion is not None:
             self.coleccion.activo = self
+
+
+class VistaFalsa:
+    """`Window.View`: solo la captura de imagen."""
+
+    def __init__(self, doc: DocumentoFalso) -> None:
+        self.doc = doc
+
+    def SaveAsImage(self, ruta: str, ancho: int, alto: int) -> None:
+        self.doc.registro.append(("View.SaveAsImage", self.doc.Name, ruta, ancho, alto))
+        self.doc._tocar("SaveAsImage")
+        if self.doc.modo_exportacion == "escribir":
+            with open(ruta, "wb") as archivo:
+                archivo.write(b"imagen")
+        elif self.doc.modo_exportacion == "vacio":
+            open(ruta, "wb").close()
+
+
+class VentanaFalsa:
+    def __init__(self, doc: DocumentoFalso) -> None:
+        self.View = VistaFalsa(doc)
 
 
 class ColeccionFalsa:

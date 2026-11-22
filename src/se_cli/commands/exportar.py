@@ -20,7 +20,7 @@ def registrar(app: typer.Typer) -> None:
             str,
             typer.Option(
                 "--format",
-                help="step, stl, x_t, igs (alias: stp, iges, parasolid).",
+                help="step, stl, x_t, igs (alias: stp, iges, parasolid), pdf, dxf, png.",
             ),
         ],
         out: Annotated[

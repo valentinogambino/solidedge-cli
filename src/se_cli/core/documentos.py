@@ -134,6 +134,16 @@ def _ruta_de(doc: Any) -> str | None:
     return texto if os.path.isabs(texto) else None
 
 
+def documento_activo(app: Any) -> Any | None:
+    """Objeto COM del documento activo, o None si no hay."""
+    try:
+        return _leer(lambda: app.ActiveDocument)
+    except Ocupado:
+        raise
+    except Exception:
+        return None
+
+
 def ruta_de(doc: Any) -> str | None:
     """Ruta completa del documento, o None si nunca se guardó."""
     return _ruta_de(doc)
@@ -482,6 +492,7 @@ __all__ = [
     "activo",
     "cerrar",
     "cerrar_todos",
+    "documento_activo",
     "estado",
     "guardar",
     "guardar_como",

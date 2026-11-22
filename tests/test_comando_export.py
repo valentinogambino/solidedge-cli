@@ -207,3 +207,65 @@ def _app():
     from se_cli.cli import app
 
     return app
+
+
+# --- PDF, DXF y PNG ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("formato", ["pdf", "dxf"])
+def test_export_de_draft_a_pdf_y_dxf(cli, app_falsa, tmp_path, formato):
+    _doc(app_falsa, tmp_path, "Plano.dft", tipo=2)
+
+    r, sobre = cli("export", "--format", formato)
+
+    salida = tmp_path / f"Plano.{formato}"
+    assert r.exit_code == 0, r.output
+    assert _copias(app_falsa) == [("SaveCopyAs", "Plano.dft", str(salida))]
+    data = sobre["data"]
+    assert data["formato"] == formato and data["tipo"] == "draft" and data["bytes"] == 9
+    assert data["marca_de_agua"] == "sin verificar"
+    assert "marca de agua" in data["nota"]
+
+
+@pytest.mark.parametrize(("nombre", "tipo"), [("P.par", 1), ("C.psm", 4), ("E.asm", 3)])
+@pytest.mark.parametrize("formato", ["pdf", "dxf"])
+def test_pdf_y_dxf_solo_de_draft(cli, app_falsa, tmp_path, nombre, tipo, formato):
+    _doc(app_falsa, tmp_path, nombre, tipo=tipo)
+    r, sobre = cli("export", "--format", formato)
+    assert r.exit_code == 2 and "draft" in sobre["error"]["message"]
+    assert app_falsa.escrituras == []
+
+
+@pytest.mark.parametrize(
+    ("nombre", "tipo"), [("P.par", 1), ("C.psm", 4), ("E.asm", 3), ("D.dft", 2)]
+)
+def test_png_de_la_vista_de_cualquier_tipo(cli, app_falsa, tmp_path, nombre, tipo):
+    _doc(app_falsa, tmp_path, nombre, tipo=tipo)
+
+    r, sobre = cli("export", "--format", "png")
+
+    salida = tmp_path / f"{nombre.split('.')[0]}.png"
+    assert r.exit_code == 0, r.output
+    assert ("View.SaveAsImage", nombre, str(salida), 1920, 1080) in app_falsa.registro
+    assert _copias(app_falsa) == []
+    assert salida.read_bytes() == b"imagen"
+    assert "marca_de_agua" not in sobre["data"]
+
+
+def test_png_activa_el_documento_y_restaura_el_activo(cli, app_falsa, tmp_path):
+    _doc(app_falsa, tmp_path, "A.par")
+    _doc(app_falsa, tmp_path, "B.par")  # queda activo
+
+    r, _ = cli("export", "--format", "png", "--doc", "A.par")
+
+    assert r.exit_code == 0
+    activaciones = [c[1] for c in app_falsa.registro if c[0] == "Activate"]
+    assert activaciones == ["A.par", "B.par"]
+    assert app_falsa.ActiveDocument.Name == "B.par"
+
+
+def test_png_sin_contenido_es_error(cli, app_falsa, tmp_path):
+    doc = _doc(app_falsa, tmp_path)
+    doc.modo_exportacion = "vacio"
+    r, _ = cli("export", "--format", "png")
+    assert r.exit_code == 4 and not (tmp_path / "Pieza.png").exists()

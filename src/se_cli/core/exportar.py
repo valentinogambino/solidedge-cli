@@ -17,7 +17,7 @@ import contextlib
 import os
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,6 +26,16 @@ from se_cli.core.acceso import leer
 from se_cli.core.errors import ArgumentoInvalido, ErrorCom, SoloLectura
 
 TIPOS_SOLIDOS = ("part", "sheetmetal", "assembly")
+TIPOS_DRAFT = ("draft",)
+TIPOS_CON_VENTANA = (*TIPOS_SOLIDOS, "draft")
+
+# Tamaño en píxeles de `View.SaveAsImage`.
+ANCHO_PNG = 1920
+ALTO_PNG = 1080
+
+NOTA_MARCA_DE_AGUA = (
+    "En Community Edition la salida puede llevar marca de agua; todavía no se validó en vivo."
+)
 
 # Un documento síncrono se exporta igual que su versión ordenada.
 _TIPO_BASE = {"syncpart": "part", "syncsheetmetal": "sheetmetal", "syncassembly": "assembly"}
@@ -54,6 +64,23 @@ def _exportar_igs(doc: Any, ruta: str) -> None:
     leer(lambda: doc.SaveCopyAs(ruta))
 
 
+def _exportar_pdf(doc: Any, ruta: str) -> None:
+    """PDF de un Draft: `SaveCopyAs` con extensión `.pdf` (hojas y calidad por defecto)."""
+    leer(lambda: doc.SaveCopyAs(ruta))
+
+
+def _exportar_dxf(doc: Any, ruta: str) -> None:
+    """DXF de un Draft: `SaveCopyAs` con extensión `.dxf`."""
+    leer(lambda: doc.SaveCopyAs(ruta))
+
+
+def _exportar_png(doc: Any, ruta: str) -> None:
+    """PNG de la vista de la ventana del documento: `Windows.Item(1).View.SaveAsImage`."""
+    ventana = leer(lambda: doc.Windows.Item(1))
+    vista = leer(lambda: ventana.View)
+    leer(lambda: vista.SaveAsImage(ruta, ANCHO_PNG, ALTO_PNG))
+
+
 # --- Formatos --------------------------------------------------------------------------------
 
 
@@ -66,6 +93,9 @@ class Formato:
     extensiones: tuple[str, ...]
     tipos: tuple[str, ...]
     exportar: Callable[[Any, str], None]
+    # La exportación sale de la vista de la ventana: el documento tiene que estar activo.
+    requiere_ventana: bool = False
+    marca_de_agua: bool = False
 
 
 FORMATOS: dict[str, Formato] = {
@@ -73,6 +103,11 @@ FORMATOS: dict[str, Formato] = {
     "stl": Formato("stl", ".stl", (".stl",), TIPOS_SOLIDOS, _exportar_stl),
     "x_t": Formato("x_t", ".x_t", (".x_t",), TIPOS_SOLIDOS, _exportar_x_t),
     "igs": Formato("igs", ".igs", (".igs", ".iges"), TIPOS_SOLIDOS, _exportar_igs),
+    "pdf": Formato("pdf", ".pdf", (".pdf",), TIPOS_DRAFT, _exportar_pdf, marca_de_agua=True),
+    "dxf": Formato("dxf", ".dxf", (".dxf",), TIPOS_DRAFT, _exportar_dxf, marca_de_agua=True),
+    "png": Formato(
+        "png", ".png", (".png",), TIPOS_CON_VENTANA, _exportar_png, requiere_ventana=True
+    ),
 }
 
 ALIAS_DE_FORMATO = {"stp": "step", "iges": "igs", "parasolid": "x_t"}
@@ -196,8 +231,26 @@ def escribir(doc: Any, formato: Formato, ruta: str, sobrescribir: bool) -> int:
 
 
 def extras_de(formato: Formato) -> dict[str, Any]:
-    """Campos adicionales del resultado según el formato."""
+    """Campos adicionales del resultado según el formato (aviso de marca de agua)."""
+    if formato.marca_de_agua:
+        return {"marca_de_agua": "sin verificar", "nota": NOTA_MARCA_DE_AGUA}
     return {}
+
+
+@contextlib.contextmanager
+def _ventana_activa(app: Any, doc: Any, formato: Formato) -> Iterator[None]:
+    """Si el formato sale de la ventana, activá `doc` y devolvé la activación al terminar."""
+    if not formato.requiere_ventana:
+        yield
+        return
+    previo = documentos.documento_activo(app)
+    leer(doc.Activate)
+    try:
+        yield
+    finally:
+        if previo is not None and previo is not doc:
+            with contextlib.suppress(Exception):
+                leer(previo.Activate)
 
 
 def exportar_individual(
@@ -211,7 +264,8 @@ def exportar_individual(
     exigir_compatible(formato, tipo, nombre)
     origen = documentos.ruta_de(doc)
     salida = documentos.validar_destino(salida_individual(formato, origen, out), sobrescribir)
-    tamano = escribir(doc, formato, salida, sobrescribir)
+    with _ventana_activa(app, doc, formato):
+        tamano = escribir(doc, formato, salida, sobrescribir)
     return {
         "entrada": origen or nombre,
         "documento": nombre,
