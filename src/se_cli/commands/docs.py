@@ -6,6 +6,7 @@ from typing import Annotated, Any
 
 import typer
 
+from se_cli.commands._comun import sin_dialogos
 from se_cli.core import documentos
 from se_cli.core.errors import ArgumentoInvalido
 from se_cli.core.session import Sesion
@@ -19,12 +20,6 @@ Selector = Annotated[
         help="Índice (1-based, como `docs list`), nombre o ruta completa. Por defecto, el activo."
     ),
 ]
-
-
-def _sin_dialogos(sesion: Sesion, fn):
-    """Corré `fn(app)` sin alertas y sin repetirla entera si Solid Edge está ocupado."""
-    with sesion.sin_alertas():
-        return sesion.llamar(fn, reintentar_todo=False)
 
 
 @app.command("list")
@@ -60,7 +55,7 @@ def abrir(
 
     ejecutar(
         ctx,
-        lambda sesion: _sin_dialogos(sesion, lambda a: documentos.abrir(a, ruta, read_only_doc)),
+        lambda sesion: sin_dialogos(sesion, lambda a: documentos.abrir(a, ruta, read_only_doc)),
         modifica=True,
         plan=plan,
     )
@@ -89,7 +84,7 @@ def nuevo(
 
     ejecutar(
         ctx,
-        lambda sesion: _sin_dialogos(sesion, lambda a: documentos.nuevo(a, tipo, template)),
+        lambda sesion: sin_dialogos(sesion, lambda a: documentos.nuevo(a, tipo, template)),
         modifica=True,
         plan=plan,
     )
@@ -100,7 +95,7 @@ def guardar(ctx: typer.Context, documento: Selector = None) -> None:
     """Guardá el documento activo o el indicado."""
     ejecutar(
         ctx,
-        lambda sesion: _sin_dialogos(sesion, lambda a: documentos.guardar(a, documento)),
+        lambda sesion: sin_dialogos(sesion, lambda a: documentos.guardar(a, documento)),
         modifica=True,
         plan=lambda: {"accion": "docs.save", "documento": documento or "activo"},
     )
@@ -128,7 +123,7 @@ def guardar_como(
 
     ejecutar(
         ctx,
-        lambda sesion: _sin_dialogos(
+        lambda sesion: sin_dialogos(
             sesion, lambda a: documentos.guardar_como(a, destino, documento, overwrite)
         ),
         modifica=True,
@@ -167,7 +162,7 @@ def cerrar(
 
     def correr(sesion: Sesion):
         if todos:
-            return _sin_dialogos(sesion, lambda a: documentos.cerrar_todos(a, save, discard))
-        return _sin_dialogos(sesion, lambda a: documentos.cerrar(a, documento, save, discard))
+            return sin_dialogos(sesion, lambda a: documentos.cerrar_todos(a, save, discard))
+        return sin_dialogos(sesion, lambda a: documentos.cerrar(a, documento, save, discard))
 
     ejecutar(ctx, correr, modifica=True, plan=plan)
