@@ -48,6 +48,11 @@ class Cli:
             sobre = json.loads(resultado.stdout)
         return resultado, sobre
 
+    def con(self, opcion_global: str, *args: str):
+        """Como `__call__`, con una opción global más (`--readonly`, `--dry-run`)."""
+        resultado = self.runner.invoke(app, ["--json", opcion_global, *args])
+        return resultado, json.loads(resultado.stdout)
+
 
 @pytest.fixture
 def cli(monkeypatch, sesion):

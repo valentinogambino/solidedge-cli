@@ -238,7 +238,7 @@ def extras_de(formato: Formato) -> dict[str, Any]:
 
 
 @contextlib.contextmanager
-def _ventana_activa(app: Any, doc: Any, formato: Formato) -> Iterator[None]:
+def ventana_activa(app: Any, doc: Any, formato: Formato) -> Iterator[None]:
     """Si el formato sale de la ventana, activá `doc` y devolvé la activación al terminar."""
     if not formato.requiere_ventana:
         yield
@@ -264,7 +264,7 @@ def exportar_individual(
     exigir_compatible(formato, tipo, nombre)
     origen = documentos.ruta_de(doc)
     salida = documentos.validar_destino(salida_individual(formato, origen, out), sobrescribir)
-    with _ventana_activa(app, doc, formato):
+    with ventana_activa(app, doc, formato):
         tamano = escribir(doc, formato, salida, sobrescribir)
     return {
         "entrada": origen or nombre,
@@ -290,4 +290,5 @@ __all__ = [
     "nombre_de_salida",
     "salida_individual",
     "tipo_base",
+    "ventana_activa",
 ]

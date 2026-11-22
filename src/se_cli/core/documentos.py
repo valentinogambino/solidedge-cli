@@ -144,6 +144,15 @@ def documento_activo(app: Any) -> Any | None:
         return None
 
 
+def buscar_abierto(app: Any, ruta: str) -> Any | None:
+    """Documento abierto con esa ruta completa, o None. No activa nada."""
+    buscada = os.path.normcase(ruta_absoluta(ruta))
+    for _, doc in _items(app):
+        if os.path.normcase(_ruta_de(doc) or "") == buscada:
+            return doc
+    return None
+
+
 def ruta_de(doc: Any) -> str | None:
     """Ruta completa del documento, o None si nunca se guardó."""
     return _ruta_de(doc)
@@ -490,6 +499,7 @@ __all__ = [
     "TIPOS_NUEVOS",
     "abrir",
     "activo",
+    "buscar_abierto",
     "cerrar",
     "cerrar_todos",
     "documento_activo",

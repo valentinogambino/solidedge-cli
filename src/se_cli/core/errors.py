@@ -3,7 +3,8 @@
 Tabla de códigos de salida (no cambia entre versiones; la fija un test):
 
 - 0: ok.
-- 1: error interno o no clasificado (`interno`).
+- 1: error interno o no clasificado (`interno`), o un lote en el que falló algún archivo
+  (`lote_con_fallos`, con los resultados parciales en `error.details`).
 - 2: uso o argumento inválido, coincide con Typer (`argumento_invalido`).
 - 3: Solid Edge no disponible o no conectado (`no_conectado`).
 - 4: error COM (`com_error`).
@@ -47,6 +48,7 @@ class Salida(IntEnum):
 
 CODIGOS_DE_SALIDA: dict[str, int] = {
     "interno": Salida.INTERNO,
+    "lote_con_fallos": Salida.INTERNO,
     "argumento_invalido": Salida.ARGUMENTO,
     "no_conectado": Salida.NO_CONECTADO,
     "com_error": Salida.COM,
@@ -127,6 +129,12 @@ class NoSoportado(SeError):
 
 class Ocupado(SeError):
     codigo = "ocupado"
+
+
+class ErrorLote(SeError):
+    """Un lote terminó, pero algún archivo falló; `details` trae todos los resultados."""
+
+    codigo = "lote_con_fallos"
 
 
 def _leer_excepinfo(error: BaseException) -> tuple[str | None, dict[str, Any]]:

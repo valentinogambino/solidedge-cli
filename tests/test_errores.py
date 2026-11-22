@@ -17,6 +17,7 @@ from se_cli.core.errors import (
 def test_tabla_de_exit_codes_estable():
     assert CODIGOS_DE_SALIDA == {
         "interno": 1,
+        "lote_con_fallos": 1,
         "argumento_invalido": 2,
         "no_conectado": 3,
         "com_error": 4,
@@ -32,6 +33,7 @@ def test_tabla_de_exit_codes_estable():
     ("clase", "codigo", "salida"),
     [
         (SeError, "interno", 1),
+        (errors.ErrorLote, "lote_con_fallos", 1),
         (errors.ArgumentoInvalido, "argumento_invalido", 2),
         (NoConectado, "no_conectado", 3),
         (ErrorCom, "com_error", 4),

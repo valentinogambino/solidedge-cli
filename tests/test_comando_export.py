@@ -169,7 +169,7 @@ def test_display_alerts_se_restaura_siempre(cli, app_falsa, tmp_path):
 
 def test_readonly_bloquea_sin_tocar_com(cli, app_falsa, tmp_path):
     _doc(app_falsa, tmp_path)
-    r, sobre = cli_con("--readonly", cli, "export", "--format", "step")
+    r, sobre = cli.con("--readonly", "export", "--format", "step")
     assert r.exit_code == 6 and sobre["error"]["code"] == "solo_lectura"
     assert app_falsa.registro == [] and list(tmp_path.iterdir()) == []
 
@@ -177,7 +177,7 @@ def test_readonly_bloquea_sin_tocar_com(cli, app_falsa, tmp_path):
 def test_dry_run_lista_entradas_y_salidas(cli, app_falsa, tmp_path):
     _doc(app_falsa, tmp_path)
     destino = tmp_path / "x.stp"
-    r, sobre = cli_con("--dry-run", cli, "export", "--format", "step", "--out", str(destino))
+    r, sobre = cli.con("--dry-run", "export", "--format", "step", "--out", str(destino))
     assert r.exit_code == 0
     assert sobre["data"] == {
         "dry_run": True,
@@ -193,20 +193,6 @@ def test_sin_instancia_da_exit_3_con_sobre_valido(cli_sin_instancia):
     r, sobre = cli_sin_instancia("export", "--format", "step")
     assert r.exit_code == 3
     assert sobre["ok"] is False and sobre["error"]["code"] == "no_conectado"
-
-
-def cli_con(global_, cli, *args):
-    """Invoca `se` con una opción global extra delante (`--readonly`, `--dry-run`)."""
-    resultado = cli.runner.invoke(_app(), ["--json", global_, *args])
-    import json
-
-    return resultado, json.loads(resultado.stdout)
-
-
-def _app():
-    from se_cli.cli import app
-
-    return app
 
 
 # --- PDF, DXF y PNG ---------------------------------------------------------------------------

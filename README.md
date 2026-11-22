@@ -208,7 +208,7 @@ Son estables entre versiones; los fija un test (`tests/test_errores.py`).
 | exit | significado | `error.code` |
 |---|---|---|
 | 0 | ok | |
-| 1 | error interno o no clasificado | `interno` |
+| 1 | error interno o no clasificado; o un lote (`export`) con algún archivo fallido | `interno`, `lote_con_fallos` |
 | 2 | uso o argumento inválido (coincide con Typer) | `argumento_invalido` |
 | 3 | Solid Edge no disponible o no conectado | `no_conectado` |
 | 4 | error COM | `com_error` |

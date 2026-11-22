@@ -427,6 +427,9 @@ class OcurrenciaFalsa:
         self.SubOccurrences = ColeccionFalsa(hijos)
 
 
+TIPO_POR_EXTENSION = {"par": 1, "dft": 2, "asm": 3, "psm": 4}
+
+
 class DocumentosFalsos(_ConFallos):
     def __init__(
         self, documentos: list[DocumentoFalso] | None = None, registro: list | None = None
@@ -434,6 +437,9 @@ class DocumentosFalsos(_ConFallos):
         super().__init__()
         self.registro = registro if registro is not None else []
         self._documentos = list(documentos or [])
+        # Configuración por nombre de archivo para los documentos que abre `Open`:
+        # {"error": excepción} o {"modo_exportacion": "nada" | "vacio"}.
+        self.al_abrir: dict[str, dict[str, Any]] = {}
         for documento in self._documentos:
             documento.registro = self.registro
             documento.coleccion = self
@@ -469,7 +475,15 @@ class DocumentosFalsos(_ConFallos):
         self.registro.append(("Documents.Open", ruta, flags))
         self._tocar("Open")
         nombre = ruta.replace("\\", "/").rsplit("/", 1)[-1]
-        return self._agregar(DocumentoFalso(nombre, ruta=ruta, solo_lectura=flags == 1))
+        config = self.al_abrir.get(nombre, {})
+        if "error" in config:
+            raise config["error"]
+        extension = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
+        doc = DocumentoFalso(
+            nombre, ruta=ruta, tipo=TIPO_POR_EXTENSION.get(extension, 1), solo_lectura=flags == 1
+        )
+        doc.modo_exportacion = config.get("modo_exportacion", "escribir")
+        return self._agregar(doc)
 
 
 class AplicacionFalsa(_ConFallos):
