@@ -46,26 +46,98 @@ class _ConFallos:
             raise self._fallos[nombre].pop(0)
 
 
+# Llamadas COM que cambian el estado de Solid Edge o de un documento.
+ESCRITURAS = frozenset(
+    {"Documents.Add", "Documents.Open", "Save", "SaveAs", "Close", "Quit", "Dirty=", "Activate"}
+)
+
+
 class DocumentoFalso(_ConFallos):
-    def __init__(self, nombre: str = "Part1.par") -> None:
+    """Documento falso. `registro` es la lista compartida donde se anota cada llamada."""
+
+    def __init__(
+        self,
+        nombre: str = "Part1.par",
+        *,
+        ruta: str | None = None,
+        tipo: int = 1,
+        sucio: bool = False,
+        solo_lectura: bool = False,
+        registro: list | None = None,
+    ) -> None:
         super().__init__()
         self.Name = nombre
-        self.FullName = nombre
+        # Un documento nunca guardado tiene un FullName sin carpeta.
+        self.FullName = ruta or nombre
+        self.Type = tipo
+        self._sucio = sucio
+        self.ReadOnly = solo_lectura
         self.cerrado = False
+        self.registro = registro if registro is not None else []
+        self.coleccion: DocumentosFalsos | None = None
+
+    @property
+    def Dirty(self) -> bool:
+        self._tocar("Dirty")
+        return self._sucio
+
+    @Dirty.setter
+    def Dirty(self, valor: bool) -> None:
+        self.registro.append(("Dirty=", self.Name, valor))
+        self._tocar("Dirty_set")
+        self._sucio = valor
+
+    def Save(self) -> None:
+        self.registro.append(("Save", self.Name))
+        self._tocar("Save")
+        self._sucio = False
+
+    def SaveAs(self, ruta: str) -> None:
+        self.registro.append(("SaveAs", self.Name, ruta))
+        self._tocar("SaveAs")
+        with open(ruta, "wb") as archivo:
+            archivo.write(b"falso")
+        self.FullName = ruta
+        self.Name = ruta.replace("\\", "/").rsplit("/", 1)[-1]
+        self._sucio = False
 
     def Close(self, guardar: bool = False) -> None:
+        self.registro.append(("Close", self.Name, guardar))
         self._tocar("Close")
         self.cerrado = True
+        if self.coleccion is not None:
+            self.coleccion.quitar(self)
 
     def Activate(self) -> None:
+        self.registro.append(("Activate", self.Name))
         self._tocar("Activate")
+        if self.coleccion is not None:
+            self.coleccion.activo = self
 
 
 class DocumentosFalsos(_ConFallos):
-    def __init__(self, documentos: list[DocumentoFalso] | None = None) -> None:
+    def __init__(
+        self, documentos: list[DocumentoFalso] | None = None, registro: list | None = None
+    ) -> None:
         super().__init__()
+        self.registro = registro if registro is not None else []
         self._documentos = list(documentos or [])
+        for documento in self._documentos:
+            documento.registro = self.registro
+            documento.coleccion = self
         self.activo: DocumentoFalso | None = self._documentos[-1] if self._documentos else None
+
+    def quitar(self, documento: DocumentoFalso) -> None:
+        self._documentos.remove(documento)
+        if self.activo is documento:
+            self.activo = self._documentos[-1] if self._documentos else None
+
+    def _agregar(self, documento: DocumentoFalso) -> DocumentoFalso:
+        documento.registro = self.registro
+        documento.coleccion = self
+        self._documentos.append(documento)
+        self.activo = documento
+        return documento
 
     @property
     def Count(self) -> int:
@@ -77,22 +149,40 @@ class DocumentosFalsos(_ConFallos):
         return self._documentos[indice - 1]
 
     def Add(self, prog_id: str) -> DocumentoFalso:
+        self.registro.append(("Documents.Add", prog_id))
         self._tocar("Add")
-        documento = DocumentoFalso(f"{prog_id}{len(self._documentos) + 1}")
-        self._documentos.append(documento)
-        self.activo = documento
-        return documento
+        return self._agregar(DocumentoFalso(f"Document{len(self._documentos) + 1}"))
+
+    def Open(self, ruta: str, flags: int | None = None) -> DocumentoFalso:
+        self.registro.append(("Documents.Open", ruta, flags))
+        self._tocar("Open")
+        nombre = ruta.replace("\\", "/").rsplit("/", 1)[-1]
+        return self._agregar(DocumentoFalso(nombre, ruta=ruta, solo_lectura=flags == 1))
 
 
 class AplicacionFalsa(_ConFallos):
-    """`Application` falsa. Los atributos con fallos programables son propiedades."""
+    """`Application` falsa. Los atributos con fallos programables son propiedades.
+
+    `registro` anota las llamadas en orden; `escrituras` filtra las que cambian estado.
+    """
 
     def __init__(self, version: str = "226.00.00.00", documentos=None) -> None:
         super().__init__()
         self._version = version
         self._alertas = True
-        self._documentos = DocumentosFalsos(documentos)
+        self.registro: list[tuple] = []
+        self._documentos = DocumentosFalsos(documentos, self.registro)
         self.historial_alertas: list[bool] = []
+        self.visible = True
+        self.salio = False
+
+    def agregar_documento(self, nombre: str = "Part1.par", **opciones: Any) -> DocumentoFalso:
+        """Sumá un documento abierto (queda activo) sin anotarlo como escritura."""
+        return self._documentos._agregar(DocumentoFalso(nombre, **opciones))
+
+    @property
+    def escrituras(self) -> list[tuple]:
+        return [llamada for llamada in self.registro if llamada[0] in ESCRITURAS]
 
     @property
     def Version(self) -> str:
@@ -103,6 +193,11 @@ class AplicacionFalsa(_ConFallos):
     def Name(self) -> str:
         self._tocar("Name")
         return "Solid Edge"
+
+    @property
+    def Visible(self) -> bool:
+        self._tocar("Visible")
+        return self.visible
 
     @property
     def DisplayAlerts(self) -> bool:
@@ -121,9 +216,16 @@ class AplicacionFalsa(_ConFallos):
         return self._documentos
 
     @property
-    def ActiveDocument(self) -> DocumentoFalso | None:
+    def ActiveDocument(self) -> DocumentoFalso:
         self._tocar("ActiveDocument")
+        if self._documentos.activo is None:
+            raise com_error(0x80020009, "Excepción", "No hay documento activo")
         return self._documentos.activo
+
+    def Quit(self) -> None:
+        self.registro.append(("Quit",))
+        self._tocar("Quit")
+        self.salio = True
 
 
 class FabricaApp:

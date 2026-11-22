@@ -3,9 +3,11 @@ from typing import Annotated
 import typer
 
 from se_cli import __version__
+from se_cli.commands import sesion
 from se_cli.ejecucion import Opciones
 
 app = typer.Typer(add_completion=False, invoke_without_command=True)
+sesion.registrar(app)
 
 
 @app.callback()
