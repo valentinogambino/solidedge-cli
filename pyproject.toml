@@ -1,0 +1,39 @@
+[project]
+name = "solidedge-cli"
+version = "0.1.0"
+description = "CLI para manejar Solid Edge por COM en Windows."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "pywin32>=312",
+    "rich>=15.0.0",
+    "typer>=0.29.2",
+]
+
+[project.scripts]
+se = "se_cli.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "se_cli"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: requiere Solid Edge abierto"]
+addopts = '-m "not live"'
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.6",
+]

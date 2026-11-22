@@ -1,4 +1,10 @@
 set windows-shell := ["powershell.exe", "-NoProfile", "-Command"]
 
 test:
-    python -B -m unittest discover -s tests -p "test_*.py" -v
+    uv run pytest
+
+lint:
+    uv run ruff check .
+
+fmt:
+    uv run ruff format .

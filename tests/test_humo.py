@@ -1,10 +1,13 @@
-import unittest
+from importlib.metadata import version
+
+from typer.testing import CliRunner
+
+from se_cli import __version__
+from se_cli.cli import app
 
 
-class HumoTest(unittest.TestCase):
-    def test_suma(self):
-        self.assertEqual(2 + 2, 4)
+def test_version():
+    resultado = CliRunner().invoke(app, ["--version"])
 
-
-if __name__ == "__main__":
-    unittest.main()
+    assert resultado.exit_code == 0
+    assert resultado.stdout.strip() == __version__ == version("solidedge-cli")

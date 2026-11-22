@@ -11,4 +11,5 @@ jobs:
     # devenv debe permitir acceso a repos del usuario (access_level: user).
     uses: valentinogambino/devenv/.github/workflows/ci-proyecto.yml@main
     with:
-      python: '3.14'
+      python: '3.11'
+      runner: windows-latest
