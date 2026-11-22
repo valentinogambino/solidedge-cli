@@ -6,12 +6,14 @@ Los `Console` se crean en cada llamada para escribir en el `sys.stdout`/`sys.std
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import Any
 
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
+from rich.tree import Tree
 
 from se_cli.core.errors import SeError
 from se_cli.core.result import a_json, a_serializable, fallo, ok
@@ -65,9 +67,38 @@ def _es_lista_de_dicts(valor: Any) -> bool:
     return isinstance(valor, list) and bool(valor) and all(isinstance(x, dict) for x in valor)
 
 
+def _etiqueta_de_nodo(nodo: dict[str, Any]) -> Text:
+    archivo = os.path.basename(str(nodo.get("archivo") or "")) or "-"
+    texto = f"{nodo.get('nombre', '')} x{nodo.get('cantidad', 1)}  ({archivo})"
+    if nodo.get("visible") is False:
+        texto += "  [oculto]"
+    if nodo.get("ciclo"):
+        texto += "  [ciclo]"
+    if nodo.get("truncado"):
+        texto += "  [...]"
+    return Text(texto)
+
+
+def _arbol_de_nodos(nodos: list[dict[str, Any]], titulo: str) -> Tree:
+    """`rich.tree` de nodos `{nombre, archivo, cantidad, hijos}` (`se asm tree`)."""
+    arbol = Tree(Text(titulo))
+
+    def agregar(padre: Tree, lista: list[dict[str, Any]]) -> None:
+        for nodo in lista:
+            agregar(padre.add(_etiqueta_de_nodo(nodo)), nodo.get("hijos") or [])
+
+    agregar(arbol, nodos)
+    return arbol
+
+
 def renderizar_humano(data: Any, consola: Console) -> None:
-    """Dibujá `data` como tabla clave/valor (dict), tabla de filas (lista) o texto."""
-    if isinstance(data, dict):
+    """Dibujá `data` como tabla clave/valor (dict), tabla de filas (lista) o texto.
+
+    Un dict con la clave `arbol` (lista de nodos con `hijos`) se dibuja como `rich.tree`.
+    """
+    if isinstance(data, dict) and isinstance(data.get("arbol"), list):
+        consola.print(_arbol_de_nodos(data["arbol"], str(data.get("documento", "ensamble"))))
+    elif isinstance(data, dict):
         simples = {k: v for k, v in data.items() if not _es_lista_de_dicts(v)}
         if data.get("dry_run"):
             consola.print(Text("[dry-run] No se ejecutó nada; esto es lo que se haría:"))
