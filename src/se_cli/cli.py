@@ -3,6 +3,7 @@ from typing import Annotated
 import typer
 
 from se_cli import __version__
+from se_cli.ejecucion import Opciones
 
 app = typer.Typer(add_completion=False, invoke_without_command=True)
 
@@ -11,9 +12,22 @@ app = typer.Typer(add_completion=False, invoke_without_command=True)
 def principal(
     contexto: typer.Context,
     version: Annotated[bool, typer.Option("--version", help="Mostrá la versión de se.")] = False,
+    json: Annotated[
+        bool,
+        typer.Option("--json", help="Salida como {ok, data, error} en una línea, sin colores."),
+    ] = False,
+    readonly: Annotated[
+        bool, typer.Option("--readonly", help="Bloqueá todo comando que modifique (exit 6).")
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Los comandos que modifican informan qué harían."),
+    ] = False,
 ) -> None:
     """Manejá Solid Edge desde la terminal."""
+    contexto.obj = Opciones(json=json, readonly=readonly, dry_run=dry_run)
     if version:
         typer.echo(__version__)
-    elif contexto.invoked_subcommand is None:
+        raise typer.Exit()
+    if contexto.invoked_subcommand is None:
         typer.echo(contexto.get_help())
