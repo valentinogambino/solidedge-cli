@@ -201,6 +201,129 @@ se --json features list
 `indice` es 1-based. `tipo` sale de `FeatureTypeConstants` (el entero si no tiene nombre). Solo
 pieza y chapa: otro tipo da exit 2.
 
+## Exportar y Draft
+
+Los tres comandos escriben archivos (`export` además abre y cierra documentos en un lote), así que
+cuentan como que modifican: `--readonly` los bloquea (exit 6) y `--dry-run` informa qué harían
+sin tocar Solid Edge ni el disco. Corren con `DisplayAlerts` apagado (se restaura siempre).
+
+**Estado de la validación:** todo F4 se probó contra un COM falso. Las llamadas a Solid Edge
+(`SaveCopyAs` por extensión, `View.SaveAsImage`, `ModelLinks.Add`, `DrawingViews.Add*View`,
+`SaveAsFlatDXFEx`, tamaños de hoja) todavía **no se validaron en vivo**; cada una está aislada en
+una función pequeña de `src/se_cli/core/` para corregirla fácil.
+
+**Marca de agua:** en Community Edition el PDF y el DXF pueden salir con marca de agua. Todavía no
+se verificó, así que esos resultados traen `"marca_de_agua": "sin verificar"` y una `nota`.
+
+### Formatos y tipos de documento
+
+| `--format` | alias | extensión de salida | documentos que admite |
+|---|---|---|---|
+| `step` | `stp` | `.stp` (también acepta `.step` en `--out`) | `part`, `sheetmetal`, `assembly` |
+| `stl` | | `.stl` | `part`, `sheetmetal`, `assembly` |
+| `x_t` | `parasolid` | `.x_t` | `part`, `sheetmetal`, `assembly` |
+| `igs` | `iges` | `.igs` (también `.iges`) | `part`, `sheetmetal`, `assembly` |
+| `pdf` | | `.pdf` | `draft` |
+| `dxf` | | `.dxf` | `draft` |
+| `png` | | `.png` | `part`, `sheetmetal`, `assembly`, `draft` (la vista de la ventana, 1920x1080) |
+
+Los documentos síncronos (`syncpart`, ...) se tratan como su versión ordenada. Un formato que no
+encaja con el tipo del documento da exit 2 antes de escribir nada. Todo sale por `SaveCopyAs`
+(salvo `png`, que usa `View.SaveAsImage`): no reapunta el documento vivo a la copia.
+
+### `se export`
+
+```powershell
+se --json export --format step                       # documento activo, junto al documento
+se --json export --format pdf --doc Plano.dft --out C:\salida\plano.pdf --overwrite
+# {"ok": true, "data": {"entrada": "C:\\p\\Pieza.par", "documento": "Pieza.par", "tipo": "part", "formato": "step", "salida": "C:\\p\\Pieza.stp", "ok": true, "bytes": 8152, "duracion_s": 0.41}, "error": null}
+```
+Sin entradas exporta el documento activo (o `--doc`). Tiene que estar guardado o, si no, exige
+`--out` con ruta de archivo. `--out` puede ser un archivo (sin extensión se le pone la del formato;
+con la de otro formato da exit 2) o una carpeta existente. Si la salida ya existe y no hay
+`--overwrite`: exit 6 (Solid Edge abriría un diálogo modal que `DisplayAlerts` no suprime); con
+`--overwrite` el archivo anterior se aparta y se restaura si la exportación falla. Después de
+exportar se verifica que el archivo exista y pese más de 0 bytes; si no, exit 4.
+
+```powershell
+se --json export .\*.par --format step --out C:\salida   # lote: Python expande el glob
+se --json export .\piezas --format stl --recursive
+# {"ok": true, "data": {"formato": "step", "salida": "C:\\salida", "resultados": [{"entrada": "C:\\p\\A.par", "salida": "C:\\salida\\A.stp", "ok": true, "bytes": 8152, "duracion_s": 1.2}, {"entrada": "C:\\p\\B.par", "salida": "C:\\salida\\B.stp", "ok": true, "bytes": 9120, "duracion_s": 0.9}], "resumen": {"total": 2, "ok": 2, "fallidos": 0}}, "error": null}
+```
+Con entradas (archivos, carpetas o globs; en Windows el shell no expande `*`, lo hace `se`) exporta
+un lote. Una carpeta toma los archivos `.par`, `.psm`, `.asm` y `.dft` compatibles con el formato
+(`--recursive` baja por las subcarpetas y habilita `**` en los globs). Un archivo explícito que no
+es compatible da exit 2, uno inexistente o un glob sin coincidencias exit 5. `--out` tiene que ser
+una carpeta (se crea). Dos entradas que darían la misma salida son exit 2.
+
+Por archivo: si ya está abierto se usa esa instancia y **no se cierra**; si no, se abre, se
+exporta y se cierra sin guardar (`Close(False)`). Al terminar queda activo el documento que lo
+estaba antes. Una salida que ya existe sin `--overwrite` deja a ese archivo en `ok: false` (código
+`solo_lectura`) sin cortar el lote.
+
+Si algún archivo falla el lote termina con **exit 1** y `ok: false`, y los resultados parciales
+van en `error.details` (mismas claves `resultados` y `resumen`):
+
+```powershell
+# {"ok": false, "data": null, "error": {"code": "lote_con_fallos", "message": "Fallaron 1 de 2 exportaciones. B.par: Ya existe C:\\salida\\B.stp. Usá --overwrite para reemplazarlo.", "details": {"formato": "step", "salida": "C:\\salida", "resultados": [{"entrada": "C:\\p\\A.par", "salida": "C:\\salida\\A.stp", "ok": true, "bytes": 8152, "duracion_s": 1.2}, {"entrada": "C:\\p\\B.par", "salida": "C:\\salida\\B.stp", "ok": false, "error": {"code": "solo_lectura", "message": "Ya existe C:\\salida\\B.stp. Usá --overwrite para reemplazarlo.", "details": {"ruta": "C:\\salida\\B.stp"}}, "duracion_s": 0.0}], "resumen": {"total": 2, "ok": 1, "fallidos": 1}}}}
+```
+
+Con `--dry-run` lista entradas y salidas:
+
+```powershell
+se --json --dry-run export .\*.par --format step
+# {"ok": true, "data": {"dry_run": true, "accion": "export", "formato": "step", "entradas": [{"entrada": "C:\\p\\A.par", "salida": "C:\\p\\A.stp"}], "overwrite": false}, "error": null}
+```
+
+### `se draft from-part`
+
+```powershell
+se --json draft from-part C:\p\Pieza.par --views front,top,right,iso --scale auto --sheet A3 --pdf
+# {"ok": true, "data": {"draft": "C:\\p\\Pieza.dft", "modelo": "C:\\p\\Pieza.par", "hoja": {"nombre": "A3", "ancho": 0.42, "alto": 0.297, "origen": "solicitada"}, "escala": "1:2", "vistas": [{"nombre": "front", "orientacion": "igFrontView", "x": 0.1125, "y": 0.10425}, {"nombre": "top", "orientacion": "igTopView", "x": 0.1125, "y": 0.22275}, {"nombre": "right", "orientacion": "igRightView", "x": 0.3075, "y": 0.10425}, {"nombre": "iso", "orientacion": "igTopFrontRightView", "x": 0.3075, "y": 0.22275}], "abierto": false, "escala_auto": true, "pdf": "C:\\p\\Pieza.pdf", "pdf_bytes": 20480, "marca_de_agua": "sin verificar", "nota": "En Community Edition la salida puede llevar marca de agua; todavía no se validó en vivo."}, "error": null}
+```
+Crea un Draft nuevo (con `--template` si se pasa), enlaza el modelo (`.par`, `.psm` o `.asm`; si
+no existe, exit 5), coloca las vistas, lo guarda en `--out` (por defecto junto al modelo, con
+extensión `.dft`) y lo cierra. `--keep-open` lo deja abierto y activo; `--pdf` exporta además
+`<nombre>.pdf` junto al `.dft`. No pisa un `.dft` ni un PDF existentes sin `--overwrite` (exit 6).
+Nunca cierra ni modifica el modelo fuente: solo se abre (y se cierra sin guardar) si hace falta
+medirlo para `--scale auto` y no estaba abierto.
+
+- `--views`: `front`, `top`, `right`, `left`, `bottom`, `back` e `iso` (alias `isometric`),
+  hasta 6; por defecto `front,top,right,iso`. Un nombre inválido da exit 2.
+- `--scale`: `1:2`, `2:1`, `0.5` o `auto` (por defecto). Con `auto` se elige la escala normalizada
+  más grande entre 5:1, 2:1, 1:1, 1:2, 1:5, 1:10, 1:20, 1:50 y 1:100 con la que entran todas las
+  vistas en su celda, usando la caja del modelo (`Body.GetRange`, o `GetRangeBox` por ocurrencia
+  en un ensamble). Si la API no la da, usa 1:1 y devuelve `"escala_auto": false`.
+- `--sheet`: `A5` a `A0` apaisadas. Sin esto se usa la hoja de la plantilla (o A3 si no se puede leer).
+- Las vistas se reparten en una grilla de celdas sin superposición: la frontal abajo a la
+  izquierda, la superior encima, la derecha al lado y la isométrica en la esquina libre. Se deja un
+  margen de 15 mm y 30 mm abajo para el cuadro de rotulación.
+
+### `se sheetmetal flat-dxf`
+
+```powershell
+se --json sheetmetal flat-dxf C:\p\Chapa.psm --out C:\salida\chapa.dxf
+# {"ok": true, "data": {"entrada": "C:\\p\\Chapa.psm", "documento": "Chapa.psm", "tipo": "sheetmetal", "formato": "dxf", "salida": "C:\\salida\\chapa.dxf", "ok": true, "bytes": 4096, "duracion_s": 0.7, "marca_de_agua": "sin verificar", "nota": "En Community Edition la salida puede llevar marca de agua; todavía no se validó en vivo."}, "error": null}
+```
+Exporta el desarrollo (flat pattern) de una chapa. Toma un archivo `.psm` (si no está abierto se
+abre y se cierra sin guardar), `--doc <selector>` o el documento activo. Un documento que no es
+chapa da exit 2. Usa el desarrollo que la chapa **ya tiene** (`Models.SaveAsFlatDXFEx` con
+`UseFlatPatternModel=True`, sin elegir cara, arista ni vértice); si no tiene, sale con exit 5 y
+explica que hay que crearlo en Solid Edge: generarlo exige elegir geometría. Misma regla de
+`--overwrite` y de verificación de tamaño que `export`.
+
+### Supuestos de la API para validar en vivo
+
+| qué | llamada usada |
+|---|---|
+| STEP, STL, Parasolid, IGES, PDF, DXF | `doc.SaveCopyAs(ruta)`, el formato sale de la extensión; sin opciones de STEP/STL |
+| PNG | `doc.Windows.Item(1).View.SaveAsImage(ruta, 1920, 1080)` con el documento activado |
+| Draft nuevo | `Documents.Add("SolidEdge.DraftDocument")` o la plantilla |
+| Hoja | `ActiveSheet.SheetSetup.SheetSizeOption = PaperSizeConstants.igIso<A>Wide`; medidas leídas de `SheetWidth`/`SheetHeight` |
+| Enlace y vistas | `ModelLinks.Add(ruta)`; `ActiveSheet.DrawingViews.AddPartView`, `AddSheetMetalView` o `AddAssemblyView` con `(enlace, orientación, escala, x, y, 0)`; la `x, y` es el centro de la vista |
+| Caja del modelo | `Models.Item(1).Body.GetRange([0]*3, [0]*3)` (lee los puntos del retorno); ensamble: `Occurrence.GetRangeBox` |
+| Desarrollo | `FlatPatternModels.Count`; `Models.SaveAsFlatDXFEx(ruta, None, None, None, True)` |
+
 ## Códigos de salida
 
 Son estables entre versiones; los fija un test (`tests/test_errores.py`).
