@@ -3,13 +3,14 @@ from typing import Annotated
 import typer
 
 from se_cli import __version__
-from se_cli.commands import docs, masa, sesion, variables
+from se_cli.commands import docs, masa, propiedades, sesion, variables
 from se_cli.ejecucion import Opciones
 
 app = typer.Typer(add_completion=False, invoke_without_command=True)
 sesion.registrar(app)
 app.add_typer(docs.app, name="docs")
 app.add_typer(variables.app, name="vars")
+app.add_typer(propiedades.app, name="props")
 masa.registrar(app)
 
 
