@@ -56,14 +56,14 @@ diálogos modales.
 
 ```powershell
 se --json docs list
-# {"ok": true, "data": {"cantidad": 1, "documentos": [{"indice": 1, "nombre": "Pieza.par", "ruta": "C:\p\Pieza.par", "tipo": "part", "modificado": false, "activo": true, "solo_lectura": false}]}, "error": null}
+# {"ok": true, "data": {"cantidad": 1, "documentos": [{"indice": 1, "nombre": "Pieza.par", "ruta": "C:\\p\\Pieza.par", "tipo": "part", "modificado": false, "activo": true, "solo_lectura": false}]}, "error": null}
 ```
 `tipo`: `part`, `assembly`, `draft`, `sheetmetal`, `weldment` o `desconocido` (más los tipos
 de sync y visores con su nombre de constante). `ruta` es `null` si el documento nunca se guardó.
 
 ```powershell
 se --json docs active
-# {"ok": true, "data": {"indice": 1, "nombre": "Pieza.par", "ruta": "C:\p\Pieza.par", "tipo": "part", "modificado": false, "activo": true, "solo_lectura": false}, "error": null}
+# {"ok": true, "data": {"indice": 1, "nombre": "Pieza.par", "ruta": "C:\\p\\Pieza.par", "tipo": "part", "modificado": false, "activo": true, "solo_lectura": false}, "error": null}
 ```
 Sin documento activo: exit 5.
 
@@ -74,7 +74,7 @@ se --json docs open C:\p\Pieza.par [--read-only-doc]
 Ruta inexistente: exit 5. Si ya estaba abierto lo activa y devuelve `"ya_abierto": true`.
 
 ```powershell
-se --json docs new part [--template C:\pase.par]
+se --json docs new part [--template C:\p\base.par]
 # {"ok": true, "data": {"indice": 2, "nombre": "Document2", "ruta": null, "tipo": "part", ...}, "error": null}
 ```
 Tipos: `part`, `assembly`, `draft`, `sheetmetal`, `weldment`. Tipo inválido: exit 2. `weldment`
@@ -88,7 +88,7 @@ Un documento que nunca se guardó da exit 2 y pide `save-as`.
 
 ```powershell
 se --json docs save-as C:\p\Copia.par [<doc>] [--overwrite]
-# {"ok": true, "data": {..., "guardado": true, "destino": "C:\p\Copia.par", "existe": true}, "error": null}
+# {"ok": true, "data": {..., "guardado": true, "destino": "C:\\p\\Copia.par", "existe": true}, "error": null}
 ```
 Si el destino existe y no se pasó `--overwrite`: exit 6 (Solid Edge abriría un diálogo que
 `DisplayAlerts` no suprime). Con `--overwrite` el archivo anterior se aparta y se restaura si el
