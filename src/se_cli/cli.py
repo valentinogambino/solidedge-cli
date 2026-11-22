@@ -3,7 +3,7 @@ from typing import Annotated
 import typer
 
 from se_cli import __version__
-from se_cli.commands import docs, ensamble, masa, propiedades, sesion, variables
+from se_cli.commands import docs, ensamble, masa, operaciones, propiedades, sesion, variables
 from se_cli.ejecucion import Opciones
 
 app = typer.Typer(add_completion=False, invoke_without_command=True)
@@ -12,6 +12,7 @@ app.add_typer(docs.app, name="docs")
 app.add_typer(variables.app, name="vars")
 app.add_typer(propiedades.app, name="props")
 app.add_typer(ensamble.app, name="asm")
+app.add_typer(operaciones.app, name="features")
 masa.registrar(app)
 
 
