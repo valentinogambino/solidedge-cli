@@ -17,3 +17,34 @@ def test_conecta_a_la_instancia_abierta_y_lee_version():
         assert datos["version"]
         assert sesion.llamar(lambda app: str(app.Version)) == datos["version"]
         sesion.cerrar()
+
+
+@pytest.mark.live
+def test_status_en_vivo_es_de_solo_lectura():
+    import json
+
+    from typer.testing import CliRunner
+
+    from se_cli.cli import app
+
+    r = CliRunner().invoke(app, ["--json", "--readonly", "status"])
+
+    assert r.exit_code == 0
+    sobre = json.loads(r.stdout)
+    assert sobre["ok"] is True and sobre["data"]["conectado"] is True
+    assert sobre["data"]["version"]
+
+
+@pytest.mark.live
+def test_docs_list_en_vivo_es_de_solo_lectura():
+    import json
+
+    from typer.testing import CliRunner
+
+    from se_cli.cli import app
+
+    r = CliRunner().invoke(app, ["--json", "--readonly", "docs", "list"])
+
+    assert r.exit_code == 0
+    data = json.loads(r.stdout)["data"]
+    assert data["cantidad"] == len(data["documentos"])

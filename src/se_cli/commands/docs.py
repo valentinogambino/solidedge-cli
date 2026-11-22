@@ -7,6 +7,7 @@ from typing import Annotated, Any
 import typer
 
 from se_cli.core import documentos
+from se_cli.core.errors import ArgumentoInvalido
 from se_cli.core.session import Sesion
 from se_cli.ejecucion import ejecutar
 
@@ -92,3 +93,81 @@ def nuevo(
         modifica=True,
         plan=plan,
     )
+
+
+@app.command("save")
+def guardar(ctx: typer.Context, documento: Selector = None) -> None:
+    """Guardá el documento activo o el indicado."""
+    ejecutar(
+        ctx,
+        lambda sesion: _sin_dialogos(sesion, lambda a: documentos.guardar(a, documento)),
+        modifica=True,
+        plan=lambda: {"accion": "docs.save", "documento": documento or "activo"},
+    )
+
+
+@app.command("save-as")
+def guardar_como(
+    ctx: typer.Context,
+    destino: Annotated[str, typer.Argument(help="Ruta del archivo de destino.")],
+    documento: Selector = None,
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", help="Reemplazá el destino si ya existe.")
+    ] = False,
+) -> None:
+    """Guardá el documento en otra ruta. No pisa un archivo existente sin --overwrite."""
+
+    def plan() -> dict[str, Any]:
+        absoluta = documentos.validar_destino(destino, overwrite)
+        return {
+            "accion": "docs.save-as",
+            "documento": documento or "activo",
+            "destino": absoluta,
+            "overwrite": overwrite,
+        }
+
+    ejecutar(
+        ctx,
+        lambda sesion: _sin_dialogos(
+            sesion, lambda a: documentos.guardar_como(a, destino, documento, overwrite)
+        ),
+        modifica=True,
+        plan=plan,
+    )
+
+
+@app.command("close")
+def cerrar(
+    ctx: typer.Context,
+    documento: Selector = None,
+    save: Annotated[
+        bool, typer.Option("--save", help="Guardá los cambios antes de cerrar.")
+    ] = False,
+    discard: Annotated[
+        bool, typer.Option("--discard", help="Descartá los cambios sin guardar.")
+    ] = False,
+    todos: Annotated[bool, typer.Option("--all", help="Cerrá todos (exige --yes).")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Confirmá --all.")] = False,
+) -> None:
+    """Cerrá un documento. Con cambios sin guardar exige --save o --discard."""
+
+    def plan() -> dict[str, Any]:
+        if save and discard:
+            raise ArgumentoInvalido("--save y --discard son excluyentes.")
+        if todos and documento is not None:
+            raise ArgumentoInvalido("--all no se combina con un documento.")
+        if todos and not yes:
+            raise ArgumentoInvalido("Cerrar todos los documentos exige --yes.")
+        return {
+            "accion": "docs.close",
+            "documento": "todos" if todos else (documento or "activo"),
+            "save": save,
+            "discard": discard,
+        }
+
+    def correr(sesion: Sesion):
+        if todos:
+            return _sin_dialogos(sesion, lambda a: documentos.cerrar_todos(a, save, discard))
+        return _sin_dialogos(sesion, lambda a: documentos.cerrar(a, documento, save, discard))
+
+    ejecutar(ctx, correr, modifica=True, plan=plan)
