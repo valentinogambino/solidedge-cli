@@ -2,13 +2,37 @@
 
 `se` es una CLI para manejar Solid Edge 2026 Community Edition por COM desde la terminal.
 
-Necesitás Windows, Solid Edge 2026 y uv. Para correr la receta de tests, instalá también just.
+Proyecto independiente, no afiliado ni respaldado por Siemens. Solid Edge es marca de Siemens.
+
+## Requisitos
+
+- Windows.
+- Solid Edge 2026 instalado (probado con Community Edition 226.00).
+- Python 3.11 y [uv](https://docs.astral.sh/uv/).
+- Opcional: [just](https://github.com/casey/just) para la receta de tests.
+
+## Instalación
 
 ```powershell
+git clone https://github.com/valentinogambino/solidedge-cli.git
+cd solidedge-cli
 uv sync
 uv run se --help
-just test
 ```
+
+Para tener `se` en el PATH: `uv tool install .`. Para correr los tests: `just test` (o `uv run pytest`).
+
+Ejemplos (más abajo hay uno por cada comando):
+
+```powershell
+se --json connect
+se docs list
+se --json export --format step
+```
+
+## Licencia
+
+MIT, ver `LICENSE`.
 
 Para verificar F0, abrí Solid Edge y corré `uv run python scripts/smoke.py`.
 Los archivos de la prueba quedan en `out/smoke/`.
