@@ -213,12 +213,19 @@ def verificar_archivo(ruta: str) -> int:
     return tamano
 
 
-def escribir(doc: Any, formato: Formato, ruta: str, sobrescribir: bool) -> int:
+def escribir(
+    doc: Any,
+    formato: Formato,
+    ruta: str,
+    sobrescribir: bool,
+    verificar: Callable[[str], None] | None = None,
+) -> int:
     """Exportá `doc` a `ruta` y devolvé los bytes escritos.
 
     Nunca le pasa a Solid Edge una ruta que existe: con `sobrescribir` aparta el archivo previo y
     lo restaura si la exportación falla o no deja un archivo con contenido. Sin `sobrescribir` y
-    con el destino ocupado da exit 6.
+    con el destino ocupado da exit 6. `verificar(ruta)` corre sobre el archivo escrito (si
+    levanta, se lo deshace igual que a un archivo vacío).
     """
     if os.path.exists(ruta) and not sobrescribir:
         raise SoloLectura(
@@ -231,6 +238,8 @@ def escribir(doc: Any, formato: Formato, ruta: str, sobrescribir: bool) -> int:
     try:
         formato.exportar(doc, ruta)
         tamano = verificar_archivo(ruta)
+        if verificar is not None:
+            verificar(ruta)
     except BaseException:
         with contextlib.suppress(OSError):
             if os.path.exists(ruta):

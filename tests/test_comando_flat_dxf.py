@@ -1,7 +1,16 @@
 """`se sheetmetal flat-dxf` sobre el COM falso."""
 
 import pytest
-from com_falso import con_chapa
+from com_falso import (
+    CILINDRO_GEOMETRIA,
+    DXF_CON_ENTIDADES,
+    DXF_VACIO,
+    CaraFalsa,
+    con_chapa,
+    con_chapa_creable,
+)
+
+from se_cli.core import chapa
 
 
 def _chapa(app, tmp_path, nombre="Chapa.psm", **opciones):
@@ -176,3 +185,190 @@ def test_display_alerts_se_restaura(cli, app_falsa, tmp_path):
 def test_sin_instancia_da_exit_3(cli_sin_instancia):
     r, sobre = cli_sin_instancia("sheetmetal", "flat-dxf")
     assert r.exit_code == 3 and sobre["ok"] is False and sobre["error"]["code"] == "no_conectado"
+
+
+# --- --create -------------------------------------------------------------------------------
+
+
+def _creable(app, tmp_path, nombre="Chapa.psm", **opciones):
+    doc = app.agregar_documento(nombre, ruta=str(tmp_path / nombre), tipo=4, **opciones)
+    (tmp_path / nombre).write_bytes(b"psm")
+    return con_chapa_creable(doc)
+
+
+def test_create_arma_el_desarrollo_guarda_reabre_y_exporta(cli, app_falsa, tmp_path):
+    _creable(app_falsa, tmp_path)
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    assert r.exit_code == 0, r.output
+    data = sobre["data"]
+    assert data["desarrollo_creado"] is True and data["documento_guardado"] is True
+    assert data["cara"] == {"indice": 2, "area_si": 0.0048, "criterio": "cara plana de mayor area"}
+    assert data["entidades_dxf"] == 2 and data["bytes"] > 0
+    assert [c[0] for c in app_falsa.escrituras] == [
+        "FlatPatternModels.Add",
+        "FlatPatterns.Add",
+        "Save",
+        "Close",
+        "Documents.Open",
+        "Activate",
+        "SaveAsFlatDXFEx",
+    ]
+    assert _llamadas(app_falsa, "Documents.Open") == [
+        ("Documents.Open", str(tmp_path / "Chapa.psm"))
+    ]
+    assert (tmp_path / "Chapa.dxf").read_bytes() == DXF_CON_ENTIDADES
+    # El documento queda abierto y activo, y se restauran las alertas.
+    assert app_falsa.ActiveDocument.Name == "Chapa.psm"
+    assert app_falsa.Documents.Count == 1
+    assert app_falsa.historial_alertas == [False, True]
+
+
+def test_create_elige_la_cara_plana_de_mayor_area(cli, app_falsa, tmp_path):
+    doc = _creable(app_falsa, tmp_path)
+    doc.Models.Item(1).Body.caras[:] = [
+        CaraFalsa(0.5, CILINDRO_GEOMETRIA),
+        CaraFalsa(0.002),
+        CaraFalsa(0.004),
+        CaraFalsa(0.004),
+    ]
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    assert r.exit_code == 0, r.output
+    assert sobre["data"]["cara"]["indice"] == 3  # empate: la de menor índice; el cilindro no
+    assert _llamadas(app_falsa, "FlatPatterns.Add") == [("FlatPatterns.Add", 0.004)]
+
+
+def test_create_sin_efecto_si_ya_tiene_desarrollo(cli, app_falsa, tmp_path):
+    _chapa(app_falsa, tmp_path).dxf_con_entidades = True
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    assert r.exit_code == 0, r.output
+    assert sobre["data"]["desarrollo_creado"] is False
+    assert sobre["data"]["documento_guardado"] is False and sobre["data"]["cara"] is None
+    assert [c[0] for c in app_falsa.escrituras] == ["SaveAsFlatDXFEx"]
+
+
+def test_create_no_guardada_da_exit_2_sin_tocar_nada(cli, app_falsa):
+    con_chapa_creable(app_falsa.agregar_documento("Nueva.psm", tipo=4))
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create", "--out", "x.dxf")
+
+    assert r.exit_code == 2 and "save-as" in sobre["error"]["message"]
+    assert app_falsa.escrituras == []
+
+
+def test_create_solo_lectura_da_exit_6_sin_tocar_nada(cli, app_falsa, tmp_path):
+    _creable(app_falsa, tmp_path, solo_lectura=True)
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    assert r.exit_code == 6 and sobre["error"]["code"] == "solo_lectura"
+    assert app_falsa.escrituras == []
+
+
+def test_create_con_destino_ocupado_no_toca_la_chapa(cli, app_falsa, tmp_path):
+    _creable(app_falsa, tmp_path)
+    (tmp_path / "Chapa.dxf").write_bytes(b"viejo")
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    assert r.exit_code == 6 and "--overwrite" in sobre["error"]["message"]
+    assert app_falsa.escrituras == []
+    assert (tmp_path / "Chapa.dxf").read_bytes() == b"viejo"
+
+
+def test_create_con_dxf_vacio_es_error_y_no_deja_archivo(cli, app_falsa, tmp_path):
+    _creable(app_falsa, tmp_path).dxf_siempre_vacio = True
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    assert r.exit_code == 4 and "sin entidades" in sobre["error"]["message"]
+    assert not (tmp_path / "Chapa.dxf").exists()
+
+
+def test_create_con_dxf_vacio_conserva_el_dxf_previo_con_overwrite(cli, app_falsa, tmp_path):
+    _creable(app_falsa, tmp_path).dxf_siempre_vacio = True
+    (tmp_path / "Chapa.dxf").write_bytes(b"viejo")
+
+    r, _ = cli("sheetmetal", "flat-dxf", "--create", "--overwrite")
+
+    assert r.exit_code == 4
+    assert (tmp_path / "Chapa.dxf").read_bytes() == b"viejo"
+
+
+def test_create_con_archivo_no_abierto_lo_cierra_al_terminar(cli, app_falsa, tmp_path):
+    ruta = tmp_path / "Pieza.psm"
+    ruta.write_bytes(b"psm")
+    abrir = app_falsa._documentos.Open
+    abiertos = []
+
+    def abrir_creable(ruta_):
+        doc = abrir(ruta_)
+        if not abiertos:  # solo la primera apertura es la chapa sin desarrollo
+            con_chapa_creable(doc)
+        abiertos.append(doc)
+        return doc
+
+    app_falsa._documentos.Open = abrir_creable
+
+    r, sobre = cli("sheetmetal", "flat-dxf", str(ruta), "--create")
+
+    assert r.exit_code == 0, r.output
+    assert sobre["data"]["desarrollo_creado"] is True
+    assert len(abiertos) == 2 and app_falsa.Documents.Count == 0
+    assert (tmp_path / "Pieza.dxf").read_bytes() == DXF_CON_ENTIDADES
+
+
+def test_create_reactiva_el_documento_que_estaba_activo(cli, app_falsa, tmp_path):
+    _creable(app_falsa, tmp_path, "A.psm")
+    otro = app_falsa.agregar_documento("B.par", ruta=str(tmp_path / "B.par"), tipo=1)
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create", "--doc", "A.psm")
+
+    assert r.exit_code == 0, r.output
+    assert app_falsa.ActiveDocument is otro
+
+
+def test_create_documento_que_no_es_chapa_da_exit_2(cli, app_falsa, tmp_path):
+    app_falsa.agregar_documento("P.par", ruta=str(tmp_path / "P.par"), tipo=1)
+    r, _ = cli("sheetmetal", "flat-dxf", "--create")
+    assert r.exit_code == 2
+    assert app_falsa.escrituras == []
+
+
+def test_create_readonly_y_dry_run(cli, app_falsa, tmp_path):
+    _creable(app_falsa, tmp_path)
+
+    r, sobre = cli.con("--readonly", "sheetmetal", "flat-dxf", "--create")
+    assert r.exit_code == 6 and sobre["error"]["code"] == "solo_lectura"
+
+    r, sobre = cli.con("--dry-run", "sheetmetal", "flat-dxf", "--create", "--out", "x.dxf")
+    assert r.exit_code == 0
+    assert sobre["data"]["create"] is True and sobre["data"]["dry_run"] is True
+    assert app_falsa.registro == []
+
+
+def test_create_sin_instancia_da_exit_3(cli_sin_instancia):
+    r, sobre = cli_sin_instancia("sheetmetal", "flat-dxf", "--create")
+    assert r.exit_code == 3 and sobre["error"]["code"] == "no_conectado"
+
+
+def test_sin_create_una_chapa_creable_sigue_dando_exit_5(cli, app_falsa, tmp_path):
+    _creable(app_falsa, tmp_path)
+    r, sobre = cli("sheetmetal", "flat-dxf")
+    assert r.exit_code == 5 and "--create" in sobre["error"]["message"]
+    assert app_falsa.escrituras == []
+
+
+def test_contar_entidades_dxf(tmp_path):
+    vacio = tmp_path / "v.dxf"
+    vacio.write_bytes(DXF_VACIO)
+    lleno = tmp_path / "l.dxf"
+    lleno.write_bytes(DXF_CON_ENTIDADES)
+    assert chapa.contar_entidades_dxf(str(vacio)) == 0
+    assert chapa.contar_entidades_dxf(str(lleno)) == 2
+    assert chapa.contar_entidades_dxf(str(tmp_path / "no.dxf")) == 0

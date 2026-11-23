@@ -146,6 +146,11 @@ class DocumentoFalso(_ConFallos):
         self._tocar("Save")
         self._sucio = False
         self._consolidar_fisicas()
+        if self.coleccion is not None and getattr(self, "FlatPatternModels", None) is not None:
+            if self.FlatPatternModels.Count:
+                self.coleccion.persistidos[self.FullName] = {
+                    "dxf": not getattr(self, "dxf_siempre_vacio", False)
+                }
 
     def SaveAs(self, ruta: str) -> None:
         self.registro.append(("SaveAs", self.Name, ruta))
@@ -156,6 +161,14 @@ class DocumentoFalso(_ConFallos):
         self.Name = ruta.replace("\\", "/").rsplit("/", 1)[-1]
         self._sucio = False
         self._consolidar_fisicas()
+
+    def contenido_dxf(self) -> bytes:
+        """DXF que da `SaveAsFlatDXFEx`: vacio en la sesion donde se creo el desarrollo."""
+        if getattr(self, "desarrollo_de_esta_sesion", False):
+            return DXF_VACIO
+        if getattr(self, "dxf_con_entidades", False):
+            return DXF_CON_ENTIDADES
+        return b"dxf-plano"
 
     def _consolidar_fisicas(self) -> None:
         """Un cálculo con densidad recién se puede leer (`GetPhysicalProperties`) tras guardar."""
@@ -607,7 +620,7 @@ class ModelosDeChapaFalsos(ColeccionFalsa):
         self.doc._tocar("SaveAsFlatDXFEx")
         if self.doc.modo_exportacion == "escribir":
             with open(ruta, "wb") as archivo:
-                archivo.write(b"dxf-plano")
+                archivo.write(self.doc.contenido_dxf())
         elif self.doc.modo_exportacion == "vacio":
             open(ruta, "wb").close()
 
@@ -716,6 +729,8 @@ class DocumentosFalsos(_ConFallos):
         # Configuración por nombre de archivo para los documentos que abre `Open`:
         # {"error": excepción}, {"modo_exportacion": "nada" | "vacio"} o {"caja": (min, max)}.
         self.al_abrir: dict[str, dict[str, Any]] = {}
+        # Lo que quedo guardado en disco por ruta (desarrollo de una chapa) y se ve al reabrir.
+        self.persistidos: dict[str, dict[str, Any]] = {}
         for documento in self._documentos:
             documento.registro = self.registro
             documento.coleccion = self
@@ -769,6 +784,9 @@ class DocumentosFalsos(_ConFallos):
         doc.modo_exportacion = config.get("modo_exportacion", "escribir")
         if "desarrollo" in config:
             con_chapa(doc, config["desarrollo"])
+        if ruta in self.persistidos:
+            con_chapa(doc, True)
+            doc.dxf_con_entidades = self.persistidos[ruta]["dxf"]
         if "caja" in config:
             doc.Models = ColeccionFalsa([ModeloFalso(doc, caja=config["caja"])])
         return self._agregar(doc)
@@ -1127,4 +1145,100 @@ def con_modelado(doc: DocumentoFalso, *, modo: int | None = 2) -> DocumentoFalso
     doc.lado_sin_efecto = LADO_IZQUIERDO
     if modo is not None:
         doc.ModelingMode = modo
+    return doc
+
+
+# --- Chapa creable (F5, flat-dxf --create) ----------------------------------------------------
+
+ESCRITURAS = ESCRITURAS | {"FlatPatternModels.Add", "FlatPatterns.Add"}
+
+_DXF_CABECERA = b"  0\nSECTION\n  2\nHEADER\n  0\nENDSEC\n"
+DXF_VACIO = _DXF_CABECERA + b"  0\nSECTION\n  2\nENTITIES\n  0\nENDSEC\n  0\nEOF\n"
+DXF_CON_ENTIDADES = (
+    _DXF_CABECERA
+    + b"  0\nSECTION\n  2\nENTITIES\n"
+    + b"  0\nLINE\n  8\n0\n 10\n0.0\n 20\n0.0\n 11\n100.0\n 21\n0.0\n"
+    + b"  0\nLINE\n  8\n0\n 10\n100.0\n 20\n0.0\n 11\n100.0\n 21\n79.0\n"
+    + b"  0\nENDSEC\n  0\nEOF\n"
+)
+
+PLANO_GEOMETRIA = -1909484335  # igPlane
+CILINDRO_GEOMETRIA = 1234  # cualquier tipo que no sea plano
+
+
+class AristaFalsa:
+    def __init__(self) -> None:
+        self.StartVertex = object()
+
+
+class GeometriaFalsa:
+    def __init__(self, tipo: int) -> None:
+        self.Type = tipo
+
+
+class CaraFalsa:
+    def __init__(self, area: float, tipo: int = PLANO_GEOMETRIA) -> None:
+        self.Area = area
+        self.Geometry = GeometriaFalsa(tipo)
+        self.Edges = ColeccionFalsa([AristaFalsa(), AristaFalsa()])
+
+
+class CuerpoDeChapaFalso:
+    def __init__(self, caras: list[CaraFalsa]) -> None:
+        self.caras = caras
+
+    def Faces(self, consulta: int) -> ColeccionFalsa:
+        return ColeccionFalsa(self.caras)
+
+
+class ModeloDeChapaCreableFalso:
+    def __init__(self, caras: list[CaraFalsa]) -> None:
+        self.Body = CuerpoDeChapaFalso(caras)
+
+
+class PatronesPlanosFalsos:
+    def __init__(self, doc: DocumentoFalso) -> None:
+        self.doc = doc
+
+    def Add(self, arista, cara, vertice):
+        self.doc.registro.append(("FlatPatterns.Add", cara.Area))
+        self.doc._tocar("FlatPatterns.Add")
+        self.doc.desarrollo_de_esta_sesion = True
+        return object()
+
+
+class DesarrolloFalso:
+    def __init__(self, doc: DocumentoFalso) -> None:
+        self.FlatPatterns = PatronesPlanosFalsos(doc)
+
+
+class DesarrollosFalsos(ColeccionFalsa):
+    def __init__(self, doc: DocumentoFalso) -> None:
+        super().__init__([])
+        self.doc = doc
+
+    def Add(self, modelo):
+        self.doc.registro.append(("FlatPatternModels.Add",))
+        self.doc._tocar("FlatPatternModels.Add")
+        desarrollo = DesarrolloFalso(self.doc)
+        self.elementos.append(desarrollo)
+        return desarrollo
+
+
+def con_chapa_creable(doc: DocumentoFalso, caras: list[CaraFalsa] | None = None) -> DocumentoFalso:
+    """Chapa con cuerpo (caras) y sin desarrollo: `FlatPatternModels.Add` lo puede crear.
+
+    Imita lo verificado en vivo: en la sesion donde se crea el desarrollo el DXF sale sin
+    entidades; guardado y reabierto sale con entidades.
+    """
+    con_chapa(doc, con_desarrollo=False)
+    doc.Models.elementos = [
+        ModeloDeChapaCreableFalso(
+            caras
+            if caras is not None
+            else [CaraFalsa(0.0001), CaraFalsa(0.0048), CaraFalsa(0.0001), CaraFalsa(0.0048)]
+        )
+    ]
+    doc.FlatPatternModels = DesarrollosFalsos(doc)
+    doc.dxf_siempre_vacio = False
     return doc

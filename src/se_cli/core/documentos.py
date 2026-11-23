@@ -163,6 +163,12 @@ def ruta_de(doc: Any) -> str | None:
     return _ruta_de(doc)
 
 
+def es_activo(app: Any, doc: Any) -> bool:
+    """True si `doc` es el documento activo de la aplicación."""
+    clave = _clave_del_activo(app)
+    return clave is not None and _clave(doc) == clave
+
+
 def _clave(doc: Any) -> tuple[str, str]:
     return (
         os.path.normcase(str(_leer(lambda: doc.FullName) or "")),
@@ -511,6 +517,7 @@ __all__ = [
     "cerrar",
     "cerrar_todos",
     "documento_activo",
+    "es_activo",
     "estado",
     "guardar",
     "guardar_como",
