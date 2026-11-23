@@ -73,8 +73,21 @@ def test_vistas_elegidas_y_hoja(cli, app_falsa, tmp_path):
         "ancho": 0.42,
         "alto": 0.297,
         "origen": "solicitada",
+        "fondo": "A3-Sheet",
     }
+    assert _llamadas(app_falsa, "Sheet.Background=") == [("Sheet.Background=", "A3-Sheet")]
     assert sobre["data"]["escala"] == "2:1"
+
+
+@pytest.mark.parametrize("hoja", ["A5", "A0"])
+def test_hoja_sin_fondo_en_la_plantilla_sigue_sin_fondo(cli, app_falsa, tmp_path, hoja):
+    modelo = _modelo(tmp_path)
+
+    r, sobre = cli("draft", "from-part", str(modelo), "--scale", "1:1", "--sheet", hoja)
+
+    assert r.exit_code == 0, r.output
+    assert sobre["data"]["hoja"]["fondo"] is None
+    assert _llamadas(app_falsa, "Sheet.Background=") == []
 
 
 @pytest.mark.parametrize(

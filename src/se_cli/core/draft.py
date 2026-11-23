@@ -44,6 +44,23 @@ def _fijar_hoja(draft: Any, nombre: str) -> None:
     leer(lambda: setattr(setup, "SheetSizeOption", papel))
 
 
+def _fijar_fondo(draft: Any, nombre: str) -> str | None:
+    """Poné como fondo de la hoja el de su tamaño (`A3-Sheet`): marco y cuadro de rotulación.
+
+    La plantilla ISO trae fondos `A4-Sheet` a `A1-Sheet` y arranca con el de A2: cambiar solo
+    `SheetSizeOption` deja el marco y el cuadro de A2 recortados en el PDF (verificado en vivo).
+    Devuelve el nombre del fondo, o None si la plantilla no tiene uno para ese tamaño.
+    """
+
+    def poner() -> str:
+        fondo = f"{nombre}-Sheet"
+        hojas = draft.Sections.BackgroundSection.Sheets
+        draft.ActiveSheet.Background = hojas.Item(fondo)
+        return fondo
+
+    return opcional(poner)
+
+
 def _leer_hoja(draft: Any) -> tuple[float, float] | None:
     """`(ancho, alto)` de la hoja activa por `SheetSetup.SheetWidth/SheetHeight`, o None."""
 
@@ -187,11 +204,11 @@ def _medida_de_hoja(draft: Any, pedida: str | None) -> tuple[dict[str, Any], tup
     """Tamaño de hoja para el layout y su descripción para el resultado."""
     if pedida is not None:
         _fijar_hoja(draft, pedida)
+        fondo = _fijar_fondo(draft, pedida)
         ancho, alto = vistas.HOJAS[pedida]
-        return {"nombre": pedida, "ancho": ancho, "alto": alto, "origen": "solicitada"}, (
-            ancho,
-            alto,
-        )
+        info = {"nombre": pedida, "ancho": ancho, "alto": alto, "origen": "solicitada"}
+        info["fondo"] = fondo
+        return info, (ancho, alto)
     leida = _leer_hoja(draft)
     if leida is not None:
         return {"nombre": None, "ancho": leida[0], "alto": leida[1], "origen": "plantilla"}, leida

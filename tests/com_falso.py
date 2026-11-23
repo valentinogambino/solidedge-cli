@@ -124,6 +124,7 @@ class DocumentoFalso(_ConFallos):
         if tipo == 2:
             self.ModelLinks = EnlacesFalsos(self)
             self.ActiveSheet = HojaFalsa(self)
+            self.Sections = SeccionesFalsas()
             self.Sheets = ColeccionFalsa([self.ActiveSheet])
 
     @property
@@ -266,10 +267,38 @@ class VistasDeDibujoFalsas(_ConFallos):
         return len(self.vistas)
 
 
+class HojaDeFondoFalsa:
+    def __init__(self, nombre: str) -> None:
+        self.Name = nombre
+
+
+class SeccionDeFondosFalsa:
+    """`Sections.BackgroundSection`: la plantilla ISO trae fondos de A4 a A1."""
+
+    def __init__(self) -> None:
+        self.Sheets = ColeccionFalsa([HojaDeFondoFalsa(f"A{n}-Sheet") for n in (4, 3, 2, 1)])
+
+
+class SeccionesFalsas:
+    def __init__(self) -> None:
+        self.BackgroundSection = SeccionDeFondosFalsa()
+
+
 class HojaFalsa:
     def __init__(self, doc: DocumentoFalso) -> None:
+        self.doc = doc
         self.SheetSetup = ConfiguracionDeHojaFalsa(doc)
         self.DrawingViews = VistasDeDibujoFalsas(doc)
+        self._fondo = HojaDeFondoFalsa("A2-Sheet")
+
+    @property
+    def Background(self) -> HojaDeFondoFalsa:
+        return self._fondo
+
+    @Background.setter
+    def Background(self, hoja: HojaDeFondoFalsa) -> None:
+        self.doc.registro.append(("Sheet.Background=", hoja.Name))
+        self._fondo = hoja
 
 
 class VistaFalsa:

@@ -233,6 +233,8 @@ def test_png_de_la_vista_de_cualquier_tipo(cli, app_falsa, tmp_path, nombre, tip
     salida = tmp_path / f"{nombre.split('.')[0]}.png"
     assert r.exit_code == 0, r.output
     assert ("View.SaveAsImage", nombre, str(salida), 1920, 1080) in app_falsa.registro
+    llamadas = [c[0] for c in app_falsa.registro]
+    assert llamadas.index("View.Fit") < llamadas.index("View.SaveAsImage")
     assert _copias(app_falsa) == []
     assert salida.read_bytes() == b"imagen"
     assert "marca_de_agua" not in sobre["data"]
