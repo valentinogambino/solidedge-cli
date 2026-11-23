@@ -402,7 +402,8 @@ def _cerrar_uno(doc: Any, guardar_: bool, descartar: bool) -> None:
     if sucio and guardar_:
         _leer(doc.Save)
     elif sucio and descartar:
-        # Limpiar `Dirty` evita que Solid Edge pregunte; si no se puede, `Close(False)` decide.
+        # `Dirty` es de solo lectura en SE 2026 (en vivo da E_FAIL): lo que evita el diálogo es
+        # `DisplayAlerts = False` más `Close(False)`. Se intenta igual por si otra versión sí.
         with contextlib.suppress(Exception):
             doc.Dirty = False
     _leer(lambda: doc.Close(False))

@@ -78,6 +78,8 @@ def _exportar_png(doc: Any, ruta: str) -> None:
     """PNG de la vista de la ventana del documento: `Windows.Item(1).View.SaveAsImage`."""
     ventana = leer(lambda: doc.Windows.Item(1))
     vista = leer(lambda: ventana.View)
+    # Un documento recién abierto no está encuadrado: sin `Fit` el modelo sale chico y corrido.
+    acceso.opcional(vista.Fit)
     leer(lambda: vista.SaveAsImage(ruta, ANCHO_PNG, ALTO_PNG))
 
 

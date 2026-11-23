@@ -278,6 +278,9 @@ class VistaFalsa:
     def __init__(self, doc: DocumentoFalso) -> None:
         self.doc = doc
 
+    def Fit(self) -> None:
+        self.doc.registro.append(("View.Fit", self.doc.Name))
+
     def SaveAsImage(self, ruta: str, ancho: int, alto: int) -> None:
         self.doc.registro.append(("View.SaveAsImage", self.doc.Name, ruta, ancho, alto))
         self.doc._tocar("SaveAsImage")
