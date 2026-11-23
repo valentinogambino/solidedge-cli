@@ -51,7 +51,7 @@ def test_export_pdf_de_un_draft_nuevo(tmp_path):
         r, sobre = _correr("export", "--format", "pdf", "--doc", nombre, "--out", str(destino))
         assert r.exit_code in (0, 4), sobre
         if r.exit_code == 0:
-            assert sobre["data"]["marca_de_agua"] == "sin verificar"
+            assert sobre["data"]["marca_de_agua"] == "presente"
 
 
 @pytest.mark.live
@@ -90,4 +90,4 @@ def test_draft_from_part_de_un_part_nuevo_guardado_en_tmp(tmp_path):
         )
         assert r.exit_code in (0, 4), sobre
         if r.exit_code == 0:
-            assert destino.stat().st_size > 0 and sobre["data"]["marca_de_agua"] == "sin verificar"
+            assert destino.stat().st_size > 0 and sobre["data"]["marca_de_agua"] == "presente"

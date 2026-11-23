@@ -54,7 +54,7 @@ def desde_modelo(
     """Creá un Draft con las vistas de un modelo y guardalo.
 
     Nunca cierra ni modifica el modelo fuente. El PDF puede salir con marca de agua en Community
-    Edition (sin verificar).
+    Edition (leyenda "Solid Edge Community Edition" abajo a la izquierda).
     """
     planes: list[draft.Plan] = []
 

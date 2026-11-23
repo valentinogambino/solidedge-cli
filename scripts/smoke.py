@@ -24,7 +24,9 @@ OPCIONES_VISTA = 0  # Sin opciones adicionales para AddPartView.
 LADO_CUBO = 0.05  # Metros.
 
 CADENAS_MARCA = ("Community", "Academic", "Student", "Not for commercial", "Siemens")
-CONFIRMAR_PDF = "Confirmá el resultado abriendo el PDF."
+CONFIRMAR_PDF = (
+    "Confirmá el resultado abriendo el PDF: la marca de Community Edition son trazos, no texto."
+)
 
 
 def reintentar(fn, intentos=10, espera=0.5):
@@ -78,7 +80,9 @@ def detectar_marca_de_agua(pdf):
             for codificacion in ("ascii", "utf-16-be", "utf-16-le")
         )
     ]
-    estado = "detectada" if halladas else "indeterminada" if lectura_parcial else "no detectada"
+    # La marca real de Community Edition va dibujada con trazos, no como texto (verificado en
+    # vivo): sin cadenas no se puede afirmar que no haya marca, así que nunca da "no detectada".
+    estado = "detectada" if halladas else "indeterminada"
     return {"estado": estado, "cadenas": halladas, "mensaje": CONFIRMAR_PDF}
 
 

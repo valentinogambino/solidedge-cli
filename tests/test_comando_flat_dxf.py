@@ -25,7 +25,7 @@ def test_camino_feliz_con_el_documento_activo(cli, app_falsa, tmp_path):
     ]
     data = sobre["data"]
     assert isinstance(data.pop("duracion_s"), float)
-    assert data["marca_de_agua"] == "sin verificar" and data.pop("nota")
+    assert data["marca_de_agua"] == "ausente" and data.pop("nota")
     assert data == {
         "entrada": str(tmp_path / "Chapa.psm"),
         "documento": "Chapa.psm",
@@ -34,7 +34,7 @@ def test_camino_feliz_con_el_documento_activo(cli, app_falsa, tmp_path):
         "salida": str(salida),
         "ok": True,
         "bytes": 9,
-        "marca_de_agua": "sin verificar",
+        "marca_de_agua": "ausente",
     }
     assert _llamadas(app_falsa, "Close") == [] and _llamadas(app_falsa, "Save") == []
 

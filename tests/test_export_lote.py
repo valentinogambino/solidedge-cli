@@ -49,7 +49,7 @@ def test_carpeta_toma_los_compatibles_con_el_formato(cli, app_falsa, tmp_path):
     r, sobre = cli("export", str(tmp_path), "--format", "pdf")
     assert r.exit_code == 0
     assert [x["entrada"] for x in sobre["data"]["resultados"]] == [str(tmp_path / "D.dft")]
-    assert sobre["data"]["marca_de_agua"] == "sin verificar"
+    assert sobre["data"]["marca_de_agua"] == "presente"
 
 
 def test_recursive_baja_por_subcarpetas(cli, app_falsa, tmp_path):

@@ -209,8 +209,8 @@ def test_export_de_draft_a_pdf_y_dxf(cli, app_falsa, tmp_path, formato):
     assert _copias(app_falsa) == [("SaveCopyAs", "Plano.dft", str(salida))]
     data = sobre["data"]
     assert data["formato"] == formato and data["tipo"] == "draft" and data["bytes"] == 9
-    assert data["marca_de_agua"] == "sin verificar"
-    assert "marca de agua" in data["nota"]
+    assert data["marca_de_agua"] == {"pdf": "presente", "dxf": "ausente"}[formato]
+    assert "Community Edition" in data["nota"]
 
 
 @pytest.mark.parametrize(("nombre", "tipo"), [("P.par", 1), ("C.psm", 4), ("E.asm", 3)])

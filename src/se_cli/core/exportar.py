@@ -33,9 +33,17 @@ TIPOS_CON_VENTANA = (*TIPOS_SOLIDOS, "draft")
 ANCHO_PNG = 1920
 ALTO_PNG = 1080
 
-NOTA_MARCA_DE_AGUA = (
-    "En Community Edition la salida puede llevar marca de agua; todavía no se validó en vivo."
-)
+# Verificado en vivo (Solid Edge 2026 Community Edition 226.00.01.04, 2026-11-23): el PDF lleva la
+# leyenda "Solid Edge Community Edition" dibujada con contornos (no es texto: no se encuentra
+# buscando cadenas); el DXF, ni de un Draft ni de un desarrollo, trae esa leyenda.
+MARCA_DE_AGUA = {
+    "pdf": (
+        "presente",
+        "Community Edition agrega la leyenda 'Solid Edge Community Edition' en gris claro, abajo "
+        "a la izquierda de cada hoja. Va dibujada con trazos, no como texto.",
+    ),
+    "dxf": ("ausente", "El DXF no trae la leyenda de Community Edition."),
+}
 
 # Un documento síncrono se exporta igual que su versión ordenada.
 _TIPO_BASE = {"syncpart": "part", "syncsheetmetal": "sheetmetal", "syncassembly": "assembly"}
@@ -239,7 +247,8 @@ def escribir(doc: Any, formato: Formato, ruta: str, sobrescribir: bool) -> int:
 def extras_de(formato: Formato) -> dict[str, Any]:
     """Campos adicionales del resultado según el formato (aviso de marca de agua)."""
     if formato.marca_de_agua:
-        return {"marca_de_agua": "sin verificar", "nota": NOTA_MARCA_DE_AGUA}
+        estado, nota = MARCA_DE_AGUA[formato.clave]
+        return {"marca_de_agua": estado, "nota": nota}
     return {}
 
 

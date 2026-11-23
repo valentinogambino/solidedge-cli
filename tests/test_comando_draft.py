@@ -31,7 +31,7 @@ def test_vistas_por_defecto_con_escala_dada(cli, app_falsa, tmp_path):
     assert draft.exists()
     assert data["draft"] == str(draft) and data["modelo"] == str(modelo)
     assert data["escala"] == "1:2" and "escala_auto" not in data and "pdf" not in data
-    assert data["marca_de_agua"] == "sin verificar" and "marca de agua" in data["nota"]
+    assert data["marca_de_agua"] == "presente" and "Community Edition" in data["nota"]
     assert data["hoja"] == {"nombre": None, "ancho": 0.297, "alto": 0.21, "origen": "plantilla"}
     assert [v["nombre"] for v in data["vistas"]] == ["front", "top", "right", "iso"]
     assert [v["orientacion"] for v in data["vistas"]] == [
