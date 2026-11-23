@@ -5,6 +5,7 @@ import typer
 from se_cli import __version__
 from se_cli.commands import (
     chapa,
+    com,
     docs,
     draft,
     ensamble,
@@ -29,6 +30,7 @@ app.add_typer(draft.app, name="draft")
 app.add_typer(chapa.app, name="sheetmetal")
 masa.registrar(app)
 modelado.registrar(app)
+com.registrar(app)
 exportar.registrar(app)
 
 

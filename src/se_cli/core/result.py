@@ -30,6 +30,11 @@ def _repr_corto(valor: Any) -> str:
     return texto if len(texto) <= LARGO_REPR else texto[: LARGO_REPR - 3] + "..."
 
 
+def repr_corto(valor: Any) -> str:
+    """`repr` de `valor` recortado a un largo razonable."""
+    return _repr_corto(valor)
+
+
 def a_serializable(valor: Any) -> Any:
     """Convertí a tipos JSON los valores típicos de COM.
 
