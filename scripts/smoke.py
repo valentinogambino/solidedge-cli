@@ -51,25 +51,19 @@ def reintentar(fn, intentos=10, espera=0.5):
 def detectar_marca_de_agua(pdf):
     """Buscá indicios en bytes de PDF y streams FlateDecode simples."""
     fragmentos = [pdf]
-    lectura_parcial = not (pdf.startswith(b"%PDF-") and b"%%EOF" in pdf)
     streams = re.finditer(rb"\bstream\r?\n(.*?)\r?\nendstream\b", pdf, re.DOTALL)
-    cantidad = 0
     for stream in streams:
-        cantidad += 1
         # Buscá el diccionario del objeto que precede al stream.
         inicio_objeto = pdf.rfind(b" obj", 0, stream.start())
         cabecera = pdf[inicio_objeto + 4 : stream.start()] if inicio_objeto >= 0 else b""
         if not re.search(rb"/Filter\b", cabecera):
             continue
         if not re.search(rb"/Filter\s*(?:/FlateDecode\b|\[\s*/FlateDecode\s*\])", cabecera):
-            lectura_parcial = True
             continue
         try:
             fragmentos.append(zlib.decompress(stream[1]))
         except zlib.error:
-            lectura_parcial = True
-    if cantidad != len(re.findall(rb"\bstream\r?\n", pdf)) or re.search(rb"/Encrypt\b", pdf):
-        lectura_parcial = True
+            continue
 
     halladas = [
         cadena

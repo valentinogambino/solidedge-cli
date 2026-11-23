@@ -24,7 +24,7 @@ SPEC.loader.exec_module(smoke)
             "detectada",
             ["Community"],
         ),
-        (b"BT (Plano de prueba) Tj ET\n", "no detectada", []),
+        (b"BT (Plano de prueba) Tj ET\n", "indeterminada", []),
         (
             b"1 0 obj\n<< /Filter /FlateDecode >>\nstream\nroto\nendstream\nendobj\n",
             "indeterminada",
