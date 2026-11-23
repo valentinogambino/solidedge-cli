@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import math
 import os
 from collections import defaultdict
 from typing import Any
@@ -860,3 +861,270 @@ class FabricaApp:
         if isinstance(elemento, BaseException):
             raise elemento
         return elemento
+
+
+# --- Modelado (F5): perfiles, extrusión, revolución y cortes ----------------------------------
+
+ESCRITURAS = ESCRITURAS | {
+    "ProfileSets.Add",
+    "Profiles.Add",
+    "Lines2d.AddBy2Points",
+    "Circles2d.AddByCenterRadius",
+    "Profile.End",
+    "Profile.ToggleConstruction",
+    "Profile.SetAxisOfRevolution",
+    "Models.AddFiniteExtrudedProtrusion",
+    "Models.AddFiniteRevolvedProtrusion",
+    "ExtrudedProtrusions.AddFiniteMulti",
+    "ExtrudedCutouts.AddFiniteMulti",
+    "ExtrudedCutouts.AddThroughAllMulti",
+    "RevolvedProtrusions.AddFiniteMulti",
+    "Feature.Delete",
+}
+
+LADO_IZQUIERDO = 1  # igLeft: un corte hacia atras desde un plano de la base no toca material
+LADO_SIMETRICO = 3  # igSymmetric: el corte pasante simetrico no corta nada (verificado en vivo)
+
+
+class LineaFalsa:
+    def __init__(self, puntos: tuple) -> None:
+        self.puntos = puntos
+        self.construccion = False
+
+
+class LineasFalsas:
+    def __init__(self, doc: DocumentoFalso) -> None:
+        self.doc = doc
+        self.lineas: list[LineaFalsa] = []
+
+    def AddBy2Points(self, x1, y1, x2, y2):
+        self.doc.registro.append(("Lines2d.AddBy2Points", x1, y1, x2, y2))
+        self.doc._tocar("AddBy2Points")
+        linea = LineaFalsa((x1, y1, x2, y2))
+        self.lineas.append(linea)
+        return linea
+
+    @property
+    def Count(self) -> int:
+        return len(self.lineas)
+
+
+class CirculosFalsos:
+    def __init__(self, doc: DocumentoFalso) -> None:
+        self.doc = doc
+        self.circulos: list[tuple] = []
+
+    def AddByCenterRadius(self, x, y, r):
+        self.doc.registro.append(("Circles2d.AddByCenterRadius", x, y, r))
+        self.doc._tocar("AddByCenterRadius")
+        self.circulos.append((x, y, r))
+        return object()
+
+    @property
+    def Count(self) -> int:
+        return len(self.circulos)
+
+
+class EjeDeRefFalso:
+    def __init__(self, linea: LineaFalsa) -> None:
+        _x1, y1, _x2, y2 = linea.puntos
+        self.eje = "x" if y1 == y2 else "y"
+
+
+class PerfilFalso:
+    """`Profile`: acumula lineas y circulos; `End` devuelve -103 con lineas y 0 con un circulo."""
+
+    def __init__(self, doc: DocumentoFalso, plano: Any) -> None:
+        self.doc = doc
+        self.plano = plano
+        self.Lines2d = LineasFalsas(doc)
+        self.Circles2d = CirculosFalsos(doc)
+        self.Name = "Profile_1"
+
+    def End(self, bandera: int) -> int:
+        self.doc.registro.append(("Profile.End", bandera))
+        self.doc._tocar("End")
+        if self.doc.codigo_end is not None:
+            return self.doc.codigo_end
+        return -103 if self.Lines2d.Count else 0
+
+    def ToggleConstruction(self, linea: LineaFalsa) -> None:
+        self.doc.registro.append(("Profile.ToggleConstruction",))
+        linea.construccion = not linea.construccion
+
+    def SetAxisOfRevolution(self, linea: LineaFalsa) -> EjeDeRefFalso:
+        self.doc.registro.append(("Profile.SetAxisOfRevolution",))
+        return EjeDeRefFalso(linea)
+
+    def caja(self) -> tuple[float, float, float, float]:
+        puntos = [ln.puntos for ln in self.Lines2d.lineas if not ln.construccion]
+        xs = [v for p in puntos for v in (p[0], p[2])]
+        ys = [v for p in puntos for v in (p[1], p[3])]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    def area(self) -> float:
+        if self.Circles2d.circulos:
+            return sum(math.pi * r * r for _, _, r in self.Circles2d.circulos)
+        x0, y0, x1, y1 = self.caja()
+        return (x1 - x0) * (y1 - y0)
+
+    def volumen_revolucion(self, eje: str, angulo: float) -> float:
+        """Teorema de Pappus con el centroide del rectangulo."""
+        x0, y0, x1, y1 = self.caja()
+        distancia = (x0 + x1) / 2 if eje == "y" else (y0 + y1) / 2
+        return self.area() * distancia * angulo
+
+
+class PerfilesFalsos:
+    def __init__(self, conjunto: ConjuntoDePerfilesFalso) -> None:
+        self.conjunto = conjunto
+
+    @property
+    def Count(self) -> int:
+        return len(self.conjunto.perfiles)
+
+    def Item(self, indice: int) -> PerfilFalso:
+        return self.conjunto.perfiles[indice - 1]
+
+    def Add(self, plano: Any) -> PerfilFalso:
+        self.conjunto.doc.registro.append(("Profiles.Add", getattr(plano, "Name", None)))
+        perfil = PerfilFalso(self.conjunto.doc, plano)
+        self.conjunto.perfiles.append(perfil)
+        return perfil
+
+
+class ConjuntoDePerfilesFalso:
+    def __init__(self, doc: DocumentoFalso, numero: int) -> None:
+        self.doc = doc
+        self.Name = f"ProfileSet_{numero}"
+        self.perfiles: list[PerfilFalso] = []
+        self.Profiles = PerfilesFalsos(self)
+
+
+class ConjuntosDePerfilesFalsos(ColeccionFalsa):
+    def __init__(self, doc: DocumentoFalso) -> None:
+        super().__init__([])
+        self.doc = doc
+
+    def Add(self) -> ConjuntoDePerfilesFalso:
+        self.doc.registro.append(("ProfileSets.Add",))
+        self.doc._tocar("ProfileSets.Add")
+        conjunto = ConjuntoDePerfilesFalso(self.doc, len(self.elementos) + 1)
+        self.elementos.append(conjunto)
+        return conjunto
+
+
+class OperacionFalsa:
+    def __init__(self, nombre: str, delta: float, coleccion: OperacionesFalsas) -> None:
+        self.Name = nombre
+        self.delta = delta
+        self.coleccion = coleccion
+
+    def Delete(self) -> None:
+        self.coleccion.doc.registro.append(("Feature.Delete", self.Name))
+        self.coleccion.elementos.remove(self)
+
+
+class OperacionesFalsas(ColeccionFalsa):
+    """`ExtrudedProtrusions`, `ExtrudedCutouts` o `RevolvedProtrusions` de un modelo."""
+
+    def __init__(self, doc: DocumentoFalso, prefijo: str, signo: int, modelo: ModeloParteFalso):
+        super().__init__([])
+        self.doc, self.prefijo, self.signo, self.modelo = doc, prefijo, signo, modelo
+        self.contador = 0
+
+    def agregar(self, delta: float) -> OperacionFalsa:
+        self.contador += 1
+        operacion = OperacionFalsa(f"{self.prefijo}_{self.contador}", self.signo * delta, self)
+        self.elementos.append(operacion)
+        return operacion
+
+    def _anotar(self, que: str, *datos: Any) -> None:
+        self.doc.registro.append((que, *datos))
+        self.doc._tocar(que)
+
+    def AddFiniteMulti(self, cantidad, perfiles, *resto):
+        perfil = perfiles[0]
+        if self.prefijo == "ExtrudedProtrusion":
+            lado, distancia = resto
+            self._anotar("ExtrudedProtrusions.AddFiniteMulti", cantidad, lado, distancia)
+            return self.agregar(perfil.area() * distancia)
+        if self.prefijo == "ExtrudedCutout":
+            lado, distancia = resto
+            self._anotar("ExtrudedCutouts.AddFiniteMulti", cantidad, lado, distancia)
+            efecto = 0.0 if lado == self.doc.lado_sin_efecto else perfil.area() * distancia
+            return self.agregar(efecto)
+        eje, lado, angulo = resto
+        self._anotar("RevolvedProtrusions.AddFiniteMulti", cantidad, eje.eje, lado, angulo)
+        return self.agregar(perfil.volumen_revolucion(eje.eje, angulo))
+
+    def AddThroughAllMulti(self, cantidad, perfiles, lado):
+        self._anotar("ExtrudedCutouts.AddThroughAllMulti", cantidad, lado)
+        sin_efecto = lado in (self.doc.lado_sin_efecto, LADO_SIMETRICO)
+        return self.agregar(0.0 if sin_efecto else perfiles[0].area() * self.modelo.espesor)
+
+
+class CuerpoDeParteFalso:
+    def __init__(self, modelo: ModeloParteFalso) -> None:
+        self.modelo = modelo
+
+    @property
+    def Volume(self) -> float:
+        return self.modelo.volumen()
+
+
+class ModeloParteFalso:
+    def __init__(self, doc: DocumentoFalso) -> None:
+        self.doc = doc
+        self.espesor = 0.0
+        self.ExtrudedProtrusions = OperacionesFalsas(doc, "ExtrudedProtrusion", 1, self)
+        self.ExtrudedCutouts = OperacionesFalsas(doc, "ExtrudedCutout", -1, self)
+        self.RevolvedProtrusions = OperacionesFalsas(doc, "RevolvedProtrusion", 1, self)
+        self.Body = CuerpoDeParteFalso(self)
+
+    def volumen(self) -> float:
+        colecciones = (self.ExtrudedProtrusions, self.ExtrudedCutouts, self.RevolvedProtrusions)
+        return sum(op.delta for col in colecciones for op in col.elementos)
+
+
+class ModelosDeParteFalsos(ColeccionFalsa):
+    """`Models` de una pieza ordenada: la primera operacion crea el modelo."""
+
+    def __init__(self, doc: DocumentoFalso) -> None:
+        super().__init__([])
+        self.doc = doc
+
+    def AddFiniteExtrudedProtrusion(self, cantidad, perfiles, lado, distancia):
+        self.doc.registro.append(("Models.AddFiniteExtrudedProtrusion", cantidad, lado, distancia))
+        self.doc._tocar("AddFiniteExtrudedProtrusion")
+        modelo = ModeloParteFalso(self.doc)
+        modelo.espesor = distancia
+        modelo.ExtrudedProtrusions.agregar(perfiles[0].area() * distancia)
+        self.elementos.append(modelo)
+        return modelo
+
+    def AddFiniteRevolvedProtrusion(self, cantidad, perfiles, eje, lado, angulo):
+        self.doc.registro.append(
+            ("Models.AddFiniteRevolvedProtrusion", cantidad, eje.eje, lado, angulo)
+        )
+        self.doc._tocar("AddFiniteRevolvedProtrusion")
+        modelo = ModeloParteFalso(self.doc)
+        modelo.RevolvedProtrusions.agregar(perfiles[0].volumen_revolucion(eje.eje, angulo))
+        self.elementos.append(modelo)
+        return modelo
+
+
+def con_modelado(doc: DocumentoFalso, *, modo: int | None = 2) -> DocumentoFalso:
+    """Dejale a una pieza o chapa planos, perfiles y `Models` capaces de modelar.
+
+    Imita lo verificado en vivo: 3 planos, `Profile.End` devuelve -103 con lineas, y un corte
+    hacia `igLeft` desde el plano no quita material (el corte pasante simetrico tampoco).
+    """
+    doc.RefPlanes = ColeccionFalsa([PlanoRefFalso(f"RefPlane_{n}") for n in (1, 2, 3)])
+    doc.ProfileSets = ConjuntosDePerfilesFalsos(doc)
+    doc.Models = ModelosDeParteFalsos(doc)
+    doc.codigo_end = None
+    doc.lado_sin_efecto = LADO_IZQUIERDO
+    if modo is not None:
+        doc.ModelingMode = modo
+    return doc

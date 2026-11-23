@@ -1,0 +1,581 @@
+"""Modelado básico de piezas: perfiles (sketch), extrusión, revolución y agujeros.
+
+Las funciones reciben el documento COM ya resuelto y no importan pywin32. Todo en SI (metros,
+radianes). Verificado en vivo (Solid Edge 2026 226.00.01.04, 2026-11-23):
+
+- Planos de referencia de la plantilla de Part: `RefPlanes.Item(1)` es `top` (plano XY, normal
+  +Z), `Item(2)` es `right` (plano YZ, normal +X) y `Item(3)` es `front` (plano XZ, normal -Y).
+  En el perfil, `x` e `y` son: top = (X, Y), right = (Y, Z), front = (X, Z).
+- Un perfil es un `ProfileSet` con un `Profile`. Después de crear una operación el perfil
+  sigue en `ProfileSets` y se puede reutilizar. El identificador estable del perfil es el
+  índice (1-based) de su `ProfileSet`.
+- `Profile.End(igProfileClosed)` devuelve -103 con un rectángulo de cuatro líneas aunque es válido
+  (con un círculo devuelve 0): se aceptan los dos.
+- La primera operación crea el modelo (`Models.AddFinite...`); las siguientes se agregan con
+  `Model.ExtrudedProtrusions.AddFiniteMulti`, `ExtrudedCutouts.AddFiniteMulti`,
+  `ExtrudedCutouts.AddThroughAllMulti` y `RevolvedProtrusions.AddFiniteMulti`.
+- Un corte que no toca material no da error: crea una operación vacía. Se detecta comparando
+  `Body.Volume` antes y después y se deshace con `Feature.Delete()`.
+- El eje de una revolución es una línea de construcción del perfil (`ToggleConstruction`) marcada
+  con `Profile.SetAxisOfRevolution`; se puede agregar aun con el perfil ya cerrado.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from typing import Any
+
+from se_cli.core import unidades
+from se_cli.core.acceso import exigir_tipo, leer, opcional
+from se_cli.core.constants import valor as constante
+from se_cli.core.errors import ArgumentoInvalido, DocNoEncontrado, ErrorCom
+
+TIPOS_MODELABLES = ("part", "sheetmetal")
+
+PLANOS: dict[str, int] = {"top": 1, "right": 2, "front": 3}
+_NOMBRE_DE_PLANO = {indice: nombre for nombre, indice in PLANOS.items()}
+
+DIRECCIONES: dict[str, str] = {
+    "normal": "igRight",
+    "reverse": "igLeft",
+    "symmetric": "igSymmetric",
+}
+
+EJES = ("x", "y")
+
+# `Profile.End` devuelve 0 o -103 con un perfil bien armado (ver el docstring del módulo).
+FIN_DE_PERFIL_VALIDO = (0, -103)
+
+# Largo (en metros) de la línea de construcción que hace de eje de revolución.
+LARGO_DE_EJE = 0.5
+
+
+# --- Validación local (sin COM) ---------------------------------------------------------------
+
+
+def parsear_longitud(texto: str, que: str, *, positiva: bool = True) -> float:
+    """Longitud en SI de `10mm` (o un número sin unidad = metros). Exit 2 si no sirve."""
+    cantidad = unidades.parsear_valor(texto)
+    if cantidad.dimension not in (None, unidades.LONGITUD):
+        raise ArgumentoInvalido(f"{que} tiene que ser una longitud (ej. 10mm): {texto!r}.")
+    if not math.isfinite(cantidad.valor_si):
+        raise ArgumentoInvalido(f"{que} no es un número finito: {texto!r}.")
+    if positiva and cantidad.valor_si <= 0:
+        raise ArgumentoInvalido(f"{que} tiene que ser mayor que 0: {texto!r}.")
+    return cantidad.valor_si
+
+
+def parsear_angulo(texto: str, que: str = "El ángulo") -> float:
+    """Ángulo en radianes de `90deg` (o un número sin unidad = radianes), mayor que 0 y ≤ 360°."""
+    cantidad = unidades.parsear_valor(texto)
+    if cantidad.dimension not in (None, unidades.ANGULO):
+        raise ArgumentoInvalido(f"{que} tiene que ser un ángulo (ej. 90deg): {texto!r}.")
+    radianes = cantidad.valor_si
+    if not math.isfinite(radianes) or radianes <= 0 or radianes > 2 * math.pi + 1e-9:
+        raise ArgumentoInvalido(f"{que} tiene que estar entre 0 y 360deg: {texto!r}.")
+    return min(radianes, 2 * math.pi)
+
+
+def parsear_punto(texto: str | None, que: str = "--at") -> tuple[float, float]:
+    """`X,Y` con unidad opcional en cada valor. Sin texto es el origen."""
+    if texto is None:
+        return 0.0, 0.0
+    partes = texto.split(",")
+    if len(partes) != 2 or not all(p.strip() for p in partes):
+        raise ArgumentoInvalido(f"{que} tiene que ser X,Y (ej. 10mm,5mm): {texto!r}.")
+    x, y = (parsear_longitud(p, f"{que} (coordenada)", positiva=False) for p in partes)
+    return x, y
+
+
+def validar_plano(texto: str) -> int | str:
+    """Plano `top|front|right` (devuelve su índice COM) o un índice numérico (1-based)."""
+    clave = texto.strip().lower()
+    if clave in PLANOS:
+        return PLANOS[clave]
+    if clave.isdigit() and int(clave) >= 1:
+        return int(clave)
+    raise ArgumentoInvalido(
+        f"Plano inválido: {texto!r}. Usá top, front, right o un índice de RefPlanes (1, 2, 3...).",
+        details={"validos": [*PLANOS, "<índice>"]},
+    )
+
+
+def validar_direccion(texto: str) -> str:
+    clave = texto.strip().lower()
+    if clave not in DIRECCIONES:
+        raise ArgumentoInvalido(
+            f"Dirección inválida: {texto!r}. Usá {', '.join(DIRECCIONES)}.",
+            details={"validas": list(DIRECCIONES)},
+        )
+    return clave
+
+
+def validar_eje(texto: str) -> str:
+    clave = texto.strip().lower()
+    if clave not in EJES:
+        raise ArgumentoInvalido(
+            f"Eje inválido: {texto!r}. Usá x (la recta y=0 del perfil) o y (la recta x=0)."
+        )
+    return clave
+
+
+def validar_perfil(texto: str | None) -> int | None:
+    """Identificador de perfil: `3` o `ProfileSet_3`. None = el último disponible."""
+    if texto is None:
+        return None
+    clave = texto.strip()
+    coincidencia = re.fullmatch(r"(?:ProfileSet_)?(\d+)", clave, flags=re.IGNORECASE)
+    if coincidencia is None or int(coincidencia.group(1)) < 1:
+        raise ArgumentoInvalido(
+            f"Perfil inválido: {texto!r}. Usá el número devuelto por `se sketch` (ej. 2)."
+        )
+    return int(coincidencia.group(1))
+
+
+def _lado(direccion: str) -> int:
+    return constante(DIRECCIONES[direccion])
+
+
+def _nombre_de_plano(indice: int) -> str:
+    return _NOMBRE_DE_PLANO.get(indice, f"plano {indice}")
+
+
+# --- Acceso COM -------------------------------------------------------------------------------
+
+
+def exigir_modelable(doc: Any, comando: str) -> str:
+    """Pieza o chapa en modo ordenado; si no, exit 2 con la explicación."""
+    tipo = exigir_tipo(doc, TIPOS_MODELABLES, comando)
+    modo = opcional(lambda: int(doc.ModelingMode))
+    if modo == constante("seModelingModeSynchronous"):
+        raise ArgumentoInvalido(
+            f"`{comando}` solo funciona con el documento en modo ordenado, y este está en modo "
+            "sincrónico. Cambiá a modo ordenado en Solid Edge.",
+            details={"modo": "sincronico"},
+        )
+    return tipo
+
+
+def _plano(doc: Any, indice: int) -> Any:
+    planos = leer(lambda: doc.RefPlanes)
+    cantidad = int(leer(lambda: planos.Count))
+    if indice > cantidad:
+        raise ArgumentoInvalido(
+            f"El documento tiene {cantidad} planos de referencia; no existe el {indice}.",
+            details={"planos": cantidad},
+        )
+    return leer(lambda: planos.Item(indice))
+
+
+def _volumen(doc: Any) -> float | None:
+    """`Body.Volume` del primer modelo (siempre se vuelve a pedir: el cuerpo cambia)."""
+    valor = opcional(lambda: float(doc.Models.Item(1).Body.Volume))
+    return None if valor is None else float(valor)
+
+
+def _modelo(doc: Any) -> Any | None:
+    """Primer modelo del documento, o None si todavía no hay ninguna operación."""
+    modelos = leer(lambda: doc.Models)
+    if int(leer(lambda: modelos.Count)) == 0:
+        return None
+    return leer(lambda: modelos.Item(1))
+
+
+def _nuevo_perfil(doc: Any, indice_plano: int) -> tuple[int, Any]:
+    plano = _plano(doc, indice_plano)
+    conjuntos = leer(lambda: doc.ProfileSets)
+    conjunto = leer(lambda: conjuntos.Add())
+    perfil = leer(lambda: conjunto.Profiles.Add(plano))
+    return int(leer(lambda: conjuntos.Count)), perfil
+
+
+def _cerrar_perfil(perfil: Any) -> int:
+    codigo = leer(lambda: perfil.End(constante("igProfileClosed")))
+    codigo = int(codigo or 0)
+    if codigo not in FIN_DE_PERFIL_VALIDO:
+        raise ErrorCom(
+            f"Solid Edge no pudo cerrar el perfil (Profile.End devolvió {codigo}).",
+            details={"codigo_end": codigo},
+        )
+    return codigo
+
+
+def resolver_perfil(doc: Any, identificador: int | None) -> tuple[int, Any]:
+    """`(índice, Profile)`: el indicado, o el último `ProfileSet` que tenga un perfil."""
+    conjuntos = leer(lambda: doc.ProfileSets)
+    cantidad = int(leer(lambda: conjuntos.Count))
+    if identificador is None:
+        for indice in range(cantidad, 0, -1):
+            conjunto = leer(lambda i=indice: conjuntos.Item(i))
+            if int(leer(lambda c=conjunto: c.Profiles.Count)) > 0:
+                return indice, leer(lambda c=conjunto: c.Profiles.Item(1))
+        raise DocNoEncontrado(
+            "El documento no tiene perfiles. Creá uno con `se sketch rect` o `se sketch circle`.",
+            details={"perfiles": 0},
+        )
+    if identificador > cantidad:
+        raise DocNoEncontrado(
+            f"No existe el perfil {identificador} (el documento tiene {cantidad}).",
+            details={"perfiles": cantidad},
+        )
+    conjunto = leer(lambda: conjuntos.Item(identificador))
+    if int(leer(lambda: conjunto.Profiles.Count)) == 0:
+        raise DocNoEncontrado(f"El perfil {identificador} está vacío.")
+    return identificador, leer(lambda: conjunto.Profiles.Item(1))
+
+
+# --- Sketch -----------------------------------------------------------------------------------
+
+
+def planificar_rect(
+    plano: str, ancho: str, alto: str, en: str | None, centrado: bool
+) -> dict[str, Any]:
+    indice = validar_plano(plano)
+    x, y = parsear_punto(en)
+    return {
+        "accion": "sketch.rect",
+        "plano": plano,
+        "plano_indice": indice,
+        "ancho_si": parsear_longitud(ancho, "--width"),
+        "alto_si": parsear_longitud(alto, "--height"),
+        "x_si": x,
+        "y_si": y,
+        "centrado": centrado,
+    }
+
+
+def planificar_circulo(
+    plano: str, radio: str | None, diametro: str | None, en: str | None
+) -> dict[str, Any]:
+    indice = validar_plano(plano)
+    x, y = parsear_punto(en)
+    return {
+        "accion": "sketch.circle",
+        "plano": plano,
+        "plano_indice": indice,
+        "radio_si": _radio(radio, diametro),
+        "x_si": x,
+        "y_si": y,
+    }
+
+
+def _radio(radio: str | None, diametro: str | None) -> float:
+    if (radio is None) == (diametro is None):
+        raise ArgumentoInvalido("Pasá --radius o --diameter (uno solo).")
+    if radio is not None:
+        return parsear_longitud(radio, "--radius")
+    return parsear_longitud(diametro or "", "--diameter") / 2.0
+
+
+def crear_rect(doc: Any, plano: str, ancho: str, alto: str, en: str | None, centrado: bool) -> Any:
+    """Perfil rectangular cerrado en un plano de referencia."""
+    datos = planificar_rect(plano, ancho, alto, en, centrado)
+    exigir_modelable(doc, "sketch rect")
+    w, h = datos["ancho_si"], datos["alto_si"]
+    x, y = datos["x_si"], datos["y_si"]
+    x0, y0 = (x - w / 2, y - h / 2) if centrado else (x, y)
+    indice, perfil = _nuevo_perfil(doc, datos["plano_indice"])
+    lineas = leer(lambda: perfil.Lines2d)
+    vertices = [(x0, y0), (x0 + w, y0), (x0 + w, y0 + h), (x0, y0 + h)]
+    for origen, destino in zip(vertices, vertices[1:] + vertices[:1], strict=True):
+        leer(lambda o=origen, d=destino: lineas.AddBy2Points(*o, *d))
+    codigo = _cerrar_perfil(perfil)
+    return _resultado_de_perfil(
+        indice,
+        datos["plano_indice"],
+        "rect",
+        {"ancho": w, "alto": h, "x": x, "y": y, "centrado": centrado},
+        codigo,
+    )
+
+
+def crear_circulo(
+    doc: Any, plano: str, radio: str | None, diametro: str | None, en: str | None
+) -> Any:
+    """Perfil circular cerrado en un plano de referencia."""
+    datos = planificar_circulo(plano, radio, diametro, en)
+    exigir_modelable(doc, "sketch circle")
+    r, x, y = datos["radio_si"], datos["x_si"], datos["y_si"]
+    indice, perfil = _nuevo_perfil(doc, datos["plano_indice"])
+    circulos = leer(lambda: perfil.Circles2d)
+    leer(lambda: circulos.AddByCenterRadius(x, y, r))
+    codigo = _cerrar_perfil(perfil)
+    return _resultado_de_perfil(
+        indice,
+        datos["plano_indice"],
+        "circulo",
+        {"radio": r, "diametro": 2 * r, "x": x, "y": y},
+        codigo,
+    )
+
+
+def _resultado_de_perfil(
+    indice: int, plano: int, tipo: str, dimensiones: dict[str, Any], codigo: int
+) -> dict[str, Any]:
+    return {
+        "perfil": indice,
+        "plano": _nombre_de_plano(plano),
+        "plano_indice": plano,
+        "tipo": tipo,
+        "dimensiones_si": dimensiones,
+        "valido": True,
+        "codigo_end": codigo,
+    }
+
+
+# --- Extrusión --------------------------------------------------------------------------------
+
+
+def planificar_extrusion(
+    distancia: str, perfil: str | None, direccion: str, corte: bool
+) -> dict[str, Any]:
+    return {
+        "accion": "extrude",
+        "distancia_si": parsear_longitud(distancia, "La distancia"),
+        "perfil": validar_perfil(perfil),
+        "direccion": validar_direccion(direccion),
+        "corte": corte,
+    }
+
+
+def _ultimo_nombre(coleccion: Any) -> str | None:
+    cantidad = int(leer(lambda: coleccion.Count))
+    if cantidad == 0:
+        return None
+    return str(opcional(lambda: coleccion.Item(cantidad).Name) or "") or None
+
+
+def _deshacer_ultima(coleccion: Any) -> None:
+    cantidad = int(leer(lambda: coleccion.Count))
+    leer(lambda: coleccion.Item(cantidad).Delete())
+
+
+def _exigir_efecto(
+    coleccion: Any, antes: float | None, despues: float | None, que: str, pista: str
+) -> float | None:
+    """Un corte que no quita material se deshace y da exit 2. Devuelve el volumen quitado."""
+    if antes is None or despues is None:
+        return None
+    quitado = antes - despues
+    if quitado <= max(1e-15, antes * 1e-9):
+        _deshacer_ultima(coleccion)
+        raise ArgumentoInvalido(
+            f"{que} no quitó material (Solid Edge igual crea la operación): se deshizo. {pista}",
+            details={"volumen_si": antes},
+        )
+    return quitado
+
+
+def extruir(
+    doc: Any, distancia: str, perfil: str | None, direccion: str, corte: bool = False
+) -> dict[str, Any]:
+    """Protrusión finita (o corte con `corte`) de un perfil."""
+    datos = planificar_extrusion(distancia, perfil, direccion, corte)
+    exigir_modelable(doc, "extrude")
+    dist, lado = datos["distancia_si"], _lado(datos["direccion"])
+    indice, objeto = resolver_perfil(doc, datos["perfil"])
+    modelo = _modelo(doc)
+    if corte:
+        if modelo is None:
+            raise ArgumentoInvalido(
+                "No hay un modelo base para cortar: hacé primero una extrusión (sin --cut)."
+            )
+        antes = _volumen(doc)
+        cortes = leer(lambda: modelo.ExtrudedCutouts)
+        leer(lambda: cortes.AddFiniteMulti(1, (objeto,), lado, dist))
+        quitado = _exigir_efecto(
+            cortes,
+            antes,
+            _volumen(doc),
+            "El corte",
+            "Probá con --direction reverse o revisá que el perfil toque el modelo.",
+        )
+        return {
+            "operacion": "corte",
+            "nombre": _ultimo_nombre(cortes),
+            "distancia_si": dist,
+            "direccion": datos["direccion"],
+            "perfil": indice,
+            "volumen_si": _volumen(doc),
+            "volumen_quitado_si": quitado,
+        }
+    if modelo is None:
+        modelos = leer(lambda: doc.Models)
+        leer(lambda: modelos.AddFiniteExtrudedProtrusion(1, (objeto,), lado, dist))
+        modelo = _modelo(doc)
+        base = True
+    else:
+        protrusiones = leer(lambda: modelo.ExtrudedProtrusions)
+        leer(lambda: protrusiones.AddFiniteMulti(1, (objeto,), lado, dist))
+        base = False
+    protrusiones = leer(lambda: modelo.ExtrudedProtrusions)
+    return {
+        "operacion": "extrusion",
+        "nombre": _ultimo_nombre(protrusiones),
+        "distancia_si": dist,
+        "direccion": datos["direccion"],
+        "perfil": indice,
+        "modelo_base": base,
+        "volumen_si": _volumen(doc),
+    }
+
+
+# --- Revolución -------------------------------------------------------------------------------
+
+
+def planificar_revolucion(angulo: str, perfil: str | None, eje: str) -> dict[str, Any]:
+    return {
+        "accion": "revolve",
+        "angulo_si": parsear_angulo(angulo),
+        "perfil": validar_perfil(perfil),
+        "eje": validar_eje(eje),
+    }
+
+
+def _poner_eje(perfil: Any, eje: str) -> Any:
+    """Agregá al perfil la línea de construcción del eje y devolvé su `RefAxis`."""
+    lineas = leer(lambda: perfil.Lines2d)
+    largo = LARGO_DE_EJE
+    extremos = (-largo, 0.0, largo, 0.0) if eje == "x" else (0.0, -largo, 0.0, largo)
+    linea = leer(lambda: lineas.AddBy2Points(*extremos))
+    leer(lambda: perfil.ToggleConstruction(linea))
+    return leer(lambda: perfil.SetAxisOfRevolution(linea))
+
+
+def revolucionar(doc: Any, angulo: str, perfil: str | None, eje: str) -> dict[str, Any]:
+    """Revolución de un perfil alrededor de uno de sus ejes (`x`: y=0, `y`: x=0)."""
+    datos = planificar_revolucion(angulo, perfil, eje)
+    exigir_modelable(doc, "revolve")
+    radianes = datos["angulo_si"]
+    indice, objeto = resolver_perfil(doc, datos["perfil"])
+    modelo = _modelo(doc)
+    eje_ref = _poner_eje(objeto, datos["eje"])
+    lado = constante("igRight")
+    if modelo is None:
+        modelos = leer(lambda: doc.Models)
+        leer(lambda: modelos.AddFiniteRevolvedProtrusion(1, (objeto,), eje_ref, lado, radianes))
+        modelo = _modelo(doc)
+        base = True
+    else:
+        revoluciones = leer(lambda: modelo.RevolvedProtrusions)
+        leer(lambda: revoluciones.AddFiniteMulti(1, (objeto,), eje_ref, lado, radianes))
+        base = False
+    revoluciones = leer(lambda: modelo.RevolvedProtrusions)
+    return {
+        "operacion": "revolucion",
+        "nombre": _ultimo_nombre(revoluciones),
+        "angulo_si": radianes,
+        "eje": datos["eje"],
+        "perfil": indice,
+        "modelo_base": base,
+        "volumen_si": _volumen(doc),
+    }
+
+
+# --- Agujero ----------------------------------------------------------------------------------
+
+
+def planificar_agujero(
+    en: str,
+    diametro: str,
+    profundidad: str | None,
+    pasante: bool,
+    plano: str,
+    direccion: str,
+) -> dict[str, Any]:
+    if pasante == (profundidad is not None):
+        raise ArgumentoInvalido("Pasá --depth o --through (uno solo).")
+    direccion = validar_direccion(direccion)
+    if pasante and direccion == "symmetric":
+        raise ArgumentoInvalido(
+            "Un agujero pasante no admite --direction symmetric (Solid Edge no corta nada): "
+            "usá normal o reverse, o --depth con symmetric."
+        )
+    x, y = parsear_punto(en)
+    return {
+        "accion": "hole",
+        "x_si": x,
+        "y_si": y,
+        "diametro_si": parsear_longitud(diametro, "--diameter"),
+        "profundidad_si": None if profundidad is None else parsear_longitud(profundidad, "--depth"),
+        "pasante": pasante,
+        "plano": plano,
+        "plano_indice": validar_plano(plano),
+        "direccion": direccion,
+    }
+
+
+def agujerear(
+    doc: Any,
+    en: str,
+    diametro: str,
+    profundidad: str | None,
+    pasante: bool,
+    plano: str,
+    direccion: str,
+) -> dict[str, Any]:
+    """Agujero simple: un círculo en el plano y un corte (finito o pasante) sobre el modelo."""
+    datos = planificar_agujero(en, diametro, profundidad, pasante, plano, direccion)
+    exigir_modelable(doc, "hole")
+    modelo = _modelo(doc)
+    if modelo is None:
+        raise ArgumentoInvalido(
+            "No hay un modelo base para agujerear: hacé primero una extrusión (`se extrude`)."
+        )
+    lado = _lado(datos["direccion"])
+    indice, perfil = _nuevo_perfil(doc, datos["plano_indice"])
+    circulos = leer(lambda: perfil.Circles2d)
+    leer(lambda: circulos.AddByCenterRadius(datos["x_si"], datos["y_si"], datos["diametro_si"] / 2))
+    _cerrar_perfil(perfil)
+    antes = _volumen(doc)
+    cortes = leer(lambda: modelo.ExtrudedCutouts)
+    if pasante:
+        leer(lambda: cortes.AddThroughAllMulti(1, (perfil,), lado))
+    else:
+        profundidad_si = datos["profundidad_si"]
+        leer(lambda: cortes.AddFiniteMulti(1, (perfil,), lado, profundidad_si))
+    quitado = _exigir_efecto(
+        cortes,
+        antes,
+        _volumen(doc),
+        "El agujero",
+        "Probá con --direction reverse o revisá que el plano y la posición toquen el modelo.",
+    )
+    return {
+        "operacion": "agujero",
+        "nombre": _ultimo_nombre(cortes),
+        "diametro_si": datos["diametro_si"],
+        "profundidad_si": datos["profundidad_si"],
+        "pasante": pasante,
+        "plano": _nombre_de_plano(datos["plano_indice"]),
+        "plano_indice": datos["plano_indice"],
+        "x_si": datos["x_si"],
+        "y_si": datos["y_si"],
+        "direccion": datos["direccion"],
+        "perfil": indice,
+        "volumen_si": _volumen(doc),
+        "volumen_quitado_si": quitado,
+    }
+
+
+__all__ = [
+    "DIRECCIONES",
+    "PLANOS",
+    "agujerear",
+    "crear_circulo",
+    "crear_rect",
+    "exigir_modelable",
+    "extruir",
+    "parsear_angulo",
+    "parsear_longitud",
+    "parsear_punto",
+    "planificar_agujero",
+    "planificar_circulo",
+    "planificar_extrusion",
+    "planificar_rect",
+    "planificar_revolucion",
+    "resolver_perfil",
+    "revolucionar",
+    "validar_perfil",
+]

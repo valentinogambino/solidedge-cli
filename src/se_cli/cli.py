@@ -10,6 +10,7 @@ from se_cli.commands import (
     ensamble,
     exportar,
     masa,
+    modelado,
     operaciones,
     propiedades,
     sesion,
@@ -27,6 +28,7 @@ app.add_typer(operaciones.app, name="features")
 app.add_typer(draft.app, name="draft")
 app.add_typer(chapa.app, name="sheetmetal")
 masa.registrar(app)
+modelado.registrar(app)
 exportar.registrar(app)
 
 
