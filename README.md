@@ -34,6 +34,8 @@ se --json connect
 # {"ok": true, "data": {"version": "226.00.00.00", "nombre": "Solid Edge", "lanzada": false}, "error": null}
 ```
 Sin instancia abierta sale con exit 3. `se connect --launch` la lanza (modifica: lo bloquea `--readonly`).
+Verificado en vivo: una instancia lanzada por automatización arranca **oculta** (`Visible=False`) y sigue viva
+cuando termina `se`; por eso `--launch` la deja visible (`Visible=True`) y devuelve `"lanzada": true`.
 
 ```powershell
 se --json status
@@ -45,7 +47,9 @@ Sin instancia **no** es error: sale exit 0 con `"conectado": false`, para sondea
 se --json quit --yes
 # {"ok": true, "data": {"cerrada": true, "descartados": []}, "error": null}
 ```
-Exige `--yes` (exit 2 sin él). Con documentos con cambios sin guardar se niega (exit 6) salvo `--discard`.
+Exige `--yes` (exit 2 sin él, sin cerrar nada). Con documentos con cambios sin guardar se niega (exit 6) salvo `--discard`.
+Verificado en vivo: `Application.Quit()` vuelve sin error, el proceso `Edge.exe` termina y después
+`se status` da `conectado: false`.
 
 ## Documentos
 
@@ -217,6 +221,141 @@ pieza y chapa: otro tipo da exit 2. Solid Edge marca el documento como modificad
 se lee `Features.Count`, y `Dirty` no se puede limpiar: después de `features list` un `docs close`
 sin flags se niega y pide `--save` o `--discard`.
 
+## Modelado básico (F5)
+
+Todos aceptan `--doc <selector>` (por defecto el activo), valores con unidad (`10mm`, `45deg`; sin
+unidad es SI: metros y radianes) y modifican: `--readonly` los bloquea (exit 6) y `--dry-run`
+informa qué harían sin tocar COM. Escriben con `DisplayAlerts` apagado. Solo funcionan en `part` y
+`sheetmetal` en **modo ordenado**; en un documento sincrónico dan exit 2 con la explicación.
+
+**Planos** (verificado en vivo con la plantilla de Part): `RefPlanes.Item(1)` es `top` (plano XY,
+normal +Z), `Item(2)` es `right` (plano YZ, normal +X) e `Item(3)` es `front` (plano XZ, normal
+-Y). En el perfil, `x` e `y` son (X, Y) en `top`, (Y, Z) en `right` y (X, Z) en `front`. `--plane`
+acepta `top`, `front`, `right` o un índice de `RefPlanes` (1, 2, 3...). La dirección `normal` de
+una extrusión o corte va hacia la normal del plano (en `front`, hacia -Y).
+
+**Identificador de perfil**: cada `se sketch` crea un `ProfileSet` y devuelve su índice (1-based) en
+`perfil`. `--profile 2` (o `ProfileSet_2`) lo elige después; sin `--profile`, `extrude` y `revolve`
+usan el **último** perfil del documento. Un perfil sigue disponible después de usarlo y se puede
+reutilizar. `se hole` crea su propio perfil, que pasa a ser el último.
+
+### `se sketch rect` y `se sketch circle`
+
+```powershell
+se --json sketch rect --plane top --width 50mm --height 30mm [--at 10mm,5mm] [--centered]
+# {"ok": true, "data": {"perfil": 1, "plano": "top", "plano_indice": 1, "tipo": "rect", "dimensiones_si": {"ancho": 0.05, "alto": 0.03, "x": 0.0, "y": 0.0, "centrado": false}, "valido": true, "codigo_end": -103}, "error": null}
+se --json sketch circle --plane top --diameter 8mm --at 25mm,15mm       # o --radius 4mm
+# {"ok": true, "data": {"perfil": 2, "plano": "top", "plano_indice": 1, "tipo": "circulo", "dimensiones_si": {"radio": 0.004, "diametro": 0.008, "x": 0.025, "y": 0.015}, "valido": true, "codigo_end": 0}, "error": null}
+```
+`--at X,Y` es la esquina inferior izquierda del rectángulo (o su centro con `--centered`) y el
+centro del círculo; por defecto el origen. `Profile.End(igProfileClosed)` devuelve **-103** con un
+rectángulo de cuatro líneas aunque es válido (con un círculo da 0): se aceptan ambos y se informan
+en `codigo_end`; cualquier otro código es exit 4.
+
+### `se extrude`
+
+```powershell
+se --json extrude 10mm [--profile 1] [--direction normal|reverse|symmetric] [--cut]
+# {"ok": true, "data": {"operacion": "extrusion", "nombre": "ExtrudedProtrusion_1", "distancia_si": 0.01, "direccion": "normal", "perfil": 1, "modelo_base": true, "volumen_si": 1.5e-05}, "error": null}
+```
+La primera operación crea el modelo base (`Models.AddFiniteExtrudedProtrusion`); las siguientes
+agregan al modelo (`ExtrudedProtrusions.AddFiniteMulti`). `symmetric` reparte la distancia total a
+ambos lados del plano. Con `--cut` corta (`ExtrudedCutouts.AddFiniteMulti`; sin modelo base es
+exit 2) y devuelve `operacion: "corte"` y `volumen_quitado_si`. Solid Edge **no da error** si el corte
+no toca material (crea una operación vacía): el comando compara `Body.Volume` antes y después, y si
+no cambió deshace la operación (`Feature.Delete`) y sale con exit 2 sugiriendo `--direction reverse`.
+
+### `se revolve`
+
+```powershell
+se --json revolve 180deg --axis y [--profile 1]
+# {"ok": true, "data": {"operacion": "revolucion", "nombre": "RevolvedProtrusion_1", "angulo_si": 3.14159, "eje": "y", "perfil": 1, "modelo_base": true, "volumen_si": 5.0e-05}, "error": null}
+```
+El eje se define con `--axis x|y`: la recta `y=0` (`x`) o `x=0` (`y`) del plano del perfil. El comando
+agrega al perfil una línea de construcción por el origen (`ToggleConstruction`) y la marca como eje
+(`Profile.SetAxisOfRevolution`, que se puede llamar con el perfil ya cerrado); el perfil tiene que
+quedar de un solo lado del eje. El ángulo por defecto es `360deg` (de 0 a 360deg). Primera operación:
+`Models.AddFiniteRevolvedProtrusion`; después, `RevolvedProtrusions.AddFiniteMulti`.
+
+### `se hole`
+
+```powershell
+se --json hole --at 25mm,15mm --diameter 8mm (--depth 5mm | --through) [--plane top] [--direction normal]
+# {"ok": true, "data": {"operacion": "agujero", "nombre": "ExtrudedCutout_1", "diametro_si": 0.008, "profundidad_si": null, "pasante": true, "plano": "top", "plano_indice": 1, "x_si": 0.025, "y_si": 0.015, "direccion": "normal", "perfil": 3, "volumen_si": 1.4497e-05, "volumen_quitado_si": 5.0265e-07}, "error": null}
+```
+Agujero simple: un círculo en el plano y un corte (`ExtrudedCutouts.AddFiniteMulti` o
+`AddThroughAllMulti`); no usa la colección `Holes`. Sin modelo base es exit 2. Igual que el corte de
+`extrude`, si no quita material se deshace y da exit 2. Un agujero pasante no admite
+`--direction symmetric` (Solid Edge no corta nada): exit 2.
+
+### Recorrido en vivo (2026-11-23, Solid Edge 226.00.01.04)
+
+```powershell
+se connect; se docs new part
+se sketch rect --plane top --width 50mm --height 30mm
+se extrude 10mm
+se sketch circle --plane top --diameter 8mm --at 25mm,15mm
+se hole --at 25mm,15mm --diameter 8mm --through --plane top
+se vars list --units mm                                  # ExtrudedProtrusion_1_FiniteDepth = 10 mm
+se vars set ExtrudedProtrusion_1_FiniteDepth 20mm
+se mass --density 7850 --units mm,g
+se docs save-as out\live\f5\caja.par; se export --format step
+```
+Caja 50 x 30 x 20 mm menos el agujero pasante de 8 mm: volumen esperado 28994.690 mm3 y masa
+0.227608 kg (28994.690e-9 m3 x 7850 kg/m3); obtenidos 28994.690 mm3 y 227.608 g (idénticos).
+Con 10 mm de alto el volumen era 14497.345 mm3 (esperado 15000 - 502.655). Pieza de revolución:
+rectángulo de 20 x 40 mm en `front` desde x = 10 mm, `revolve --axis y` = tubo de radios 10 y 30 mm:
+volumen esperado pi (30^2 - 10^2) 40 = 100530.965 mm3 y 789.168 g; obtenidos los mismos.
+Una segunda revolución de 180deg sumó 4712.389 mm3 (esperado pi (20^2 - 10^2) 10 / 2).
+
+## Escape a COM y scripts
+
+### `se com get|set|invoke`
+
+```powershell
+se --json com get ActiveDocument.Name
+# {"ok": true, "data": {"ruta": "ActiveDocument.Name", "valor": "Part1"}, "error": null}
+se --json com get ActiveDocument.Models.Item(1).ExtrudedProtrusions --list
+# {"ok": true, "data": {"ruta": "ActiveDocument.Models.Item(1).ExtrudedProtrusions", "valor": {"tipo": "coleccion", "cantidad": 1, "items": [{"indice": 1, "tipo": "objeto_com", "repr": "<COMObject Item>", "nombre": "ExtrudedProtrusion_1"}], "truncado": false}}, "error": null}
+se --json com set DisplayAlerts false
+# {"ok": true, "data": {"ruta": "DisplayAlerts", "valor": false, "valor_actual": false}, "error": null}
+se --json com invoke Documents.Item 1
+# {"ok": true, "data": {"ruta": "Documents.Item", "argumentos": [1], "resultado": {"tipo": "objeto_com", "repr": "<COMObject Item>", "nombre": "Part1"}}, "error": null}
+```
+La ruta parte de la `Application`. **Sintaxis** (parser propio y estricto, sin `eval`): segmentos
+separados por punto; cada uno es un identificador (`[A-Za-z][A-Za-z0-9_]*`) con una llamada opcional
+de argumentos literales entre paréntesis: enteros (`1`, `-2`), decimales (`0.5`), textos entre comillas
+simples o dobles (`"Nombre"`, con una barra invertida delante de la comilla o de otra barra como únicos escapes), `true`, `false` y `null`.
+Cualquier otra cosa (operadores, corchetes, nombres sueltos, un `_` inicial) es exit 2. Los
+argumentos sueltos de `invoke` y el valor de `set` se parsean igual; en PowerShell un texto lleva
+las comillas dentro de otras: `'"Nombre"'`. Con unidades no: `set` y `invoke` reciben literales
+(en SI), no `10mm`.
+
+- `get` es de lectura (funciona con `--readonly`) y solo admite llamadas a `Item(...)`; llamar a
+  cualquier otro método es `invoke` (exit 2). Un objeto COM sale como `{tipo: "objeto_com", repr,
+  nombre?}` (`nombre` si tiene `Name`); una colección **no se enumera sola**: con `--list` (y
+  `--limit N`, 50 por defecto) devuelve `{tipo: "coleccion", cantidad, items, truncado}`.
+- `set` e `invoke` modifican: `--readonly` los bloquea (exit 6) y `--dry-run` muestra la ruta
+  resuelta (`segmentos`) sin ejecutar. En `invoke` los argumentos van sueltos o entre paréntesis en
+  la última parte de la ruta, no los dos.
+- Un segmento `Quit` se rechaza en los tres subcomandos con exit 6 (usá `se quit --yes`). Un miembro que
+  no existe o seguir la ruta sobre un valor es exit 2; un error de la API es exit 4.
+
+### `se run <script.py> [--allow-scripts] [-- args...]`
+
+```powershell
+se --json run C:\scripts\leer.py --allow-scripts -- uno dos
+# {"ok": true, "data": {"script": "C:\\scripts\\leer.py", "resultado": {"version": "226.00.01.04", "documentos": 0, "args": ["uno", "dos"]}}, "error": null}
+```
+**Advertencia: el script corre con tus permisos y puede hacer cualquier cosa** (borrar archivos,
+cerrar Solid Edge, llamar a la red). Por eso sin `--allow-scripts` `se run` **siempre** falla con
+exit 6 y no lee ni ejecuta el archivo. Con el flag: `--readonly` lo bloquea (exit 6), `--dry-run`
+informa qué script correría sin ejecutarlo, un archivo inexistente es exit 5, y un script sin `main`
+es exit 2. El script define `main(app, args)` (`app` es la `Application` de late binding y `args` la
+lista de textos después de `--`); corre dentro del hilo STA de `se` y lo que devuelve (datos planos)
+va en `data.resultado`. Si lanza una excepción (o no compila) sale exit 1 con el traceback resumido en
+`error.details.traceback`.
+
 ## Exportar y Draft
 
 Los tres comandos escriben archivos (`export` además abre y cierra documentos en un lote), así que
@@ -330,13 +469,34 @@ Exporta el desarrollo (flat pattern) de una chapa. Toma un archivo `.psm` (si no
 abre y se cierra sin guardar), `--doc <selector>` o el documento activo. Un documento que no es
 chapa da exit 2. Usa el desarrollo que la chapa **ya tiene** (`Models.SaveAsFlatDXFEx` con
 `UseFlatPatternModel=True`, sin elegir cara, arista ni vértice); si no tiene, sale con exit 5 y
-explica que hay que crearlo en Solid Edge: generarlo exige elegir geometría.
-Verificado: con un desarrollo ya guardado en el archivo, `SaveAsFlatDXFEx` con `None` exporta el
-contorno (sin marca de agua). Crear el desarrollo por API es posible (`FlatPatternModels.Add(modelo)`
-y `FlatPatterns.Add(arista, cara, vértice)` con la primera cara del cuerpo; cortó 50x100 mm
-correctamente), pero en la misma sesión el DXF sale sin entidades: hace falta guardar y reabrir el
-archivo. Por eso sigue sin crearse solo; sería una decisión de diseño (por ejemplo un `--create`). Misma regla de
-`--overwrite` y de verificación de tamaño que `export`.
+sugiere `--create`. Misma regla de `--overwrite` y de verificación de tamaño que `export`.
+
+#### `--create`
+
+```powershell
+se --json sheetmetal flat-dxf --create --out C:\salida\chapa.dxf
+# {"ok": true, "data": {"entrada": "C:\\p\\Chapa.psm", "documento": "Chapa.psm", "tipo": "sheetmetal", "formato": "dxf", "salida": "C:\\salida\\chapa.dxf", "ok": true, "bytes": 34405, "duracion_s": 3.8, "marca_de_agua": "ausente", "nota": "El DXF no trae la leyenda de Community Edition.", "desarrollo_creado": true, "documento_guardado": true, "cara": {"indice": 5, "area_si": 0.0048, "criterio": "cara plana de mayor area"}, "entidades_dxf": 5}, "error": null}
+```
+Si la chapa no tiene desarrollo, lo crea por API (`FlatPatternModels.Add(modelo)` y
+`FlatPatterns.Add(arista, cara, vértice)`), **guarda la chapa** (con cualquier cambio pendiente), la
+cierra, la reabre y recién ahí exporta (en una misma sesión el DXF puede salir sin entidades).
+
+- Cara: la **cara plana de mayor área** del primer modelo (`Face.Geometry.Type == igPlane`; en un
+  empate, la de menor índice). La arista es la primera de esa cara y el vértice su vértice inicial.
+- Precondiciones (si no se cumplen, no se toca nada): la chapa tiene que estar guardada en disco
+  (si no, exit 2) y no ser de solo lectura (si no, exit 6); el DXF de destino no puede existir sin
+  `--overwrite` (exit 6).
+- Si la chapa ya tenía desarrollo no hace nada extra: `desarrollo_creado: false`,
+  `documento_guardado: false`, `cara: null`.
+- Verifica que el DXF tenga entidades (`entidades_dxf`); si sale vacío es exit 4 y no deja el archivo
+  (con `--overwrite` se conserva el anterior).
+- Después de reabrir, la chapa queda abierta y activa si lo estaba (o se reactiva el documento que
+  estaba activo); si el comando la abrió por ruta, se cierra al terminar.
+- `--dry-run` informa la acción (`"create": true`) sin tocar nada; `--readonly` da exit 6.
+
+Verificado en vivo (2026-11-23): una chapa sincrónica de 100 x 50 x 1 mm con una brida de 30 mm
+(radio interno 1 mm) da un DXF de 100 x 79.09 mm con 5 entidades; área x espesor coincide con el
+volumen de la chapa (7.9356e-6 m3) dentro del 1 %.
 
 ### Supuestos de la API (verificados en vivo)
 
@@ -361,7 +521,18 @@ Validados el 2026-11-23 contra Solid Edge 2026 Community Edition 226.00.01.04.
 | Enlace y vistas | `ModelLinks.Add(ruta)`; `DrawingViews.AddPartView`, `AddSheetMetalView`, `AddAssemblyView` con `(enlace, orientación, escala, x, y, 0)` | verificado: los tres existen y `x, y` es el centro de la vista; las vistas quedan dentro de la hoja y sin superponerse |
 | Caja del modelo | `Models.Item(1).Body.GetRange([0]*3, [0]*3)`; ensamble `Occurrence.GetRangeBox` | verificado (devuelve mínimo y máximo); la escala `auto` es razonable |
 | Desarrollo | `FlatPatternModels.Count`; `Models.SaveAsFlatDXFEx(ruta, None, None, None, True)` | verificado con un desarrollo guardado en el archivo; sin desarrollo da exit 5 (ver arriba) |
-| `Application.Quit` y `connect --launch` | | no validados a propósito (la instancia no se cierra ni se relanza) |
+| `Application.Quit` | `se quit --yes` | verificado: vuelve sin error, `Edge.exe` termina y `status` da `conectado: false` |
+| `connect --launch` | `Dispatch("SolidEdge.Application")` | verificado: arranca **oculta** (`Visible=False`) y sigue viva al terminar `se`; se le pone `Visible=True` |
+| Planos de la plantilla Part | `RefPlanes.Item(1..3)` | verificado: 1 = top (XY, +Z), 2 = right (YZ, +X), 3 = front (XZ, -Y) |
+| Perfil | `ProfileSets.Add()`, `Profiles.Add(plano)`, `Lines2d.AddBy2Points`, `Circles2d.AddByCenterRadius`, `End(igProfileClosed)` | verificado: `End` da -103 con un rectángulo y 0 con un círculo; el perfil sigue en `ProfileSets` y es reutilizable |
+| Extrusión | `Models.AddFiniteExtrudedProtrusion` (primera), `ExtrudedProtrusions.AddFiniteMulti` (siguientes) | verificado, incluido `symmetric` (la distancia es el total) |
+| Cortes y agujeros | `ExtrudedCutouts.AddFiniteMulti`, `AddThroughAllMulti` | verificado; un corte que no toca material **no da error** (se detecta con `Body.Volume`); `AddThroughAllMulti` con `igSymmetric` no corta; se deshace con `Feature.Delete` |
+| Revolución | `Models.AddFiniteRevolvedProtrusion`, `RevolvedProtrusions.AddFiniteMulti`, `Profile.SetAxisOfRevolution` | verificado (volumen de un tubo exacto); el eje se puede agregar con el perfil ya cerrado |
+| Volumen | `Models.Item(1).Body.Volume` | verificado; el `Body` hay que pedirlo de nuevo después de cada operación |
+| Desarrollo de chapa | `FlatPatternModels.Add(modelo)`, `FlatPatterns.Add(arista, cara, vértice)`, `Face.Geometry.Type == igPlane` | verificado en chapa con un doblez; en la sesión sincrónica probada el DXF salió con entidades aun sin reabrir, pero se reabre igual |
+| Brida de chapa (solo para armar la prueba) | `ModelingMode = seModelingModeSynchronous` antes del tab + `Flanges.AddSync` | verificado; en modo ordenado `Flanges.Add*` no resuelve |
+| `se com` | `getattr` / `setattr` sobre late binding | verificado con `Documents.Item(...)`, `Models.Item(1)...`, `DisplayAlerts` |
+| `se run` | `main(app, args)` en el hilo STA | verificado con un script de solo lectura |
 | hresult de "ocupado" | `RPC_E_CALL_REJECTED` / `RPC_E_SERVERCALL_RETRYLATER` | no se vio ninguno durante las pruebas |
 
 ## Códigos de salida
