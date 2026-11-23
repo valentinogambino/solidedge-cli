@@ -59,6 +59,9 @@ def _coincidencias(
     encontradas = []
     for cj in recorrer:
         for nombre_propiedad, propiedad in _propiedades(cj):
+            if not nombre_propiedad.strip():
+                # Hay entradas reservadas sin nombre (ExtendedSummaryInformation, en vivo).
+                continue
             if buscado is None or nombre_propiedad.casefold() == buscado:
                 encontradas.append((_nombre(cj), nombre_propiedad, propiedad))
     return encontradas

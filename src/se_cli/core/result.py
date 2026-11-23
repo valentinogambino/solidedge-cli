@@ -41,6 +41,10 @@ def a_serializable(valor: Any) -> Any:
         return valor
     if isinstance(valor, float):
         return valor if math.isfinite(valor) else None
+    if isinstance(valor, datetime) and type(valor).__module__ == "pywintypes":
+        # Una fecha COM (VT_DATE) no trae zona horaria: pywin32 la marca UTC pero Solid Edge la
+        # guarda en hora local (verificado en vivo), así que se informa sin zona.
+        return valor.replace(tzinfo=None).isoformat()
     if isinstance(valor, (datetime, date, time)):
         return valor.isoformat()
     if isinstance(valor, Enum):

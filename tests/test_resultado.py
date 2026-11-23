@@ -67,3 +67,13 @@ def test_a_json_no_escapa_no_ascii_y_es_json_valido():
     texto = a_json(ok({"nombre": "Ménsula ñ", "dim": (1.5, 2)}))
     assert "Ménsula ñ" in texto
     assert json.loads(texto)["data"]["dim"] == [1.5, 2]
+
+
+def test_fecha_com_se_informa_sin_zona_horaria():
+    class datetime_com(datetime):  # imita pywintypes.datetime
+        pass
+
+    datetime_com.__module__ = "pywintypes"
+    fecha = datetime_com(2026, 11, 23, 1, 25, 55, tzinfo=UTC)
+
+    assert a_serializable(fecha) == "2026-11-23T01:25:55"

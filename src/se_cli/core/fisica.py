@@ -1,8 +1,19 @@
 """Propiedades físicas (masa, volumen, inercia...) de piezas y ensamblajes.
 
-Todo en SI en la API (kg, m, m², m³, kg/m³, kg·m²). Sin densidad se lee lo que el modelo ya
-tiene guardado (`GetUserPhysicalProperties`, solo lectura). Con densidad se recalcula con
-`ComputePhysicalPropertiesWithSpecifiedDensity`, que cambia el estado del documento.
+Todo en SI en la API (kg, m, m², m³, kg/m³, kg·m²). Verificado en vivo (Solid Edge
+226.00.01.04, 2026-11-23):
+
+- Pieza y chapa: sin densidad se leen las propiedades guardadas en el modelo con
+  `Model.GetPhysicalProperties` (solo lectura; `Status` 1 = hay, 2 = no hay y todo viene en cero).
+  Un cálculo con densidad recién queda disponible para esa lectura después de guardar el
+  documento. Con densidad se recalcula con `Model.ComputePhysicalPropertiesWithSpecifiedDensity`,
+  que cambia el estado del documento. `GetUserPhysicalProperties` solo devuelve valores que el
+  usuario cargó a mano, así que no sirve para esto.
+- Ensamble: no existe un cálculo con densidad (el documento no tiene
+  `ComputePhysicalPropertiesWithSpecifiedDensity`); la masa sale de los materiales de las piezas
+  con `PhysicalProperties.GetAssemblyPhysicalProperties`, tras `Update()` si está desactualizado.
+  Un ensamble no informa el área (la API devuelve -1). Las piezas sin material cuentan con
+  densidad 1 kg/m3, aunque se les haya calculado la masa con una densidad.
 """
 
 from __future__ import annotations
@@ -12,7 +23,7 @@ from typing import Any
 
 from se_cli.core import unidades
 from se_cli.core.acceso import exigir_tipo, leer
-from se_cli.core.errors import ArgumentoInvalido, ErrorCom, NoConectado, Ocupado
+from se_cli.core.errors import ArgumentoInvalido, ErrorCom, NoSoportado
 
 TIPOS_SOPORTADOS = ("part", "sheetmetal", "assembly")
 
@@ -21,9 +32,11 @@ PRECISION = 0.99
 
 _NOMBRES_INERCIA = ("Ixx", "Iyy", "Izz", "Ixy", "Ixz", "Iyz")
 
-# Cantidad de valores que devuelve cada llamada: 9 (guardadas) u 11 (calculadas, con precisión y
-# estado al final).
-_LARGOS_VALIDOS = (9, 11)
+# `Status` de `Model.GetPhysicalProperties` cuando hay un cálculo vigente.
+ESTADO_CALCULADO = 1
+
+# Cantidad de valores que devuelve el cálculo de un `Model` (con precisión y estado al final).
+_LARGO_CALCULO = 11
 
 
 def validar_densidad(densidad: float | None) -> float | None:
@@ -62,20 +75,66 @@ def _calcular_en_com(objeto: Any, densidad: float) -> Any:
     )
 
 
-def _leer_guardadas_en_com(doc: Any) -> Any:
-    """Única llamada a `GetUserPhysicalProperties`: tupla de 9, o `None` si no hay guardadas."""
-    try:
-        return leer(doc.GetUserPhysicalProperties)
-    except (Ocupado, NoConectado):
-        raise
-    except Exception:
+def _leer_pieza_en_com(modelo: Any) -> Any:
+    """Única llamada a `Model.GetPhysicalProperties`: tupla de 13 con el estado al principio.
+
+    Los seis arreglos son `[in,out]` y van por nombre, como en el cálculo.
+    """
+    return leer(
+        lambda: modelo.GetPhysicalProperties(
+            Density=0.0,
+            Accuracy=0.0,
+            CenterOfGravity=_buffer(3),
+            CenterOfVolume=_buffer(3),
+            GlobalMomentsOfInteria=_buffer(6),
+            PrincipalMomentsOfInteria=_buffer(3),
+            PrincipalAxes=_buffer(9),
+            RadiiOfGyration=_buffer(3),
+        )
+    )
+
+
+def _largo_invalido(resultado: Any) -> ErrorCom:
+    recibido = len(resultado) if isinstance(resultado, tuple) else type(resultado).__name__
+    return ErrorCom(f"Solid Edge devolvió {recibido} en lugar de 13 valores de propiedades.")
+
+
+def _normalizar_lectura_de_pieza(resultado: Any) -> tuple[tuple, float] | None:
+    """Pasá la tupla de 13 de `GetPhysicalProperties` a la forma del cálculo; None si no hay."""
+    if not isinstance(resultado, tuple) or len(resultado) != 13:
+        raise _largo_invalido(resultado)
+    estado, densidad, precision, volumen, area, masa, *vectores, _ = resultado
+    if estado != ESTADO_CALCULADO or any(v is None for v in vectores):
         return None
+    return (volumen, area, masa, *vectores, precision, estado), float(densidad)
 
 
-def _objeto_de_calculo(doc: Any, tipo: str) -> Any:
-    """Pieza y chapa calculan sobre su primer `Model`; el ensamble, sobre el documento."""
-    if tipo == "assembly":
-        return doc
+def _leer_ensamble_en_com(doc: Any) -> tuple[Any, bool]:
+    """`GetAssemblyPhysicalProperties` (tupla de 13) y si hubo que correr `Update()` antes."""
+    props = leer(lambda: doc.PhysicalProperties)
+    actualizado = False
+    if not leer(lambda: props.IsUpToDate):
+        leer(props.Update)
+        actualizado = True
+    return leer(props.GetAssemblyPhysicalProperties), actualizado
+
+
+def _normalizar_ensamble(resultado: Any) -> tuple:
+    """Pasá la tupla de 13 del ensamble a la forma del cálculo (área -1 queda en None)."""
+    if not isinstance(resultado, tuple) or len(resultado) != 13:
+        raise _largo_invalido(resultado)
+    masa, volumen, area, cdm, cdv, momentos, eje1, eje2, eje3, principales, radios, enfermo, _ = (
+        resultado
+    )
+    if enfermo:
+        raise ErrorCom("Solid Edge marcó las propiedades físicas del ensamble como inválidas.")
+    ejes = (*eje1, *eje2, *eje3)
+    area = area if area >= 0 else None
+    return (volumen, area, masa, cdm, cdv, momentos, principales, ejes, radios)
+
+
+def _objeto_de_calculo(doc: Any) -> Any:
+    """Pieza y chapa calculan sobre su primer `Model`."""
     modelos = leer(lambda: doc.Models)
     if int(leer(lambda: modelos.Count)) < 1:
         raise ArgumentoInvalido("El documento no tiene ningún cuerpo para calcular.")
@@ -94,7 +153,7 @@ def _vector(valores: Any, n: int) -> list[float]:
 
 def _desempaquetar(resultado: Any) -> dict[str, Any]:
     """Nombrá los valores de la tupla; algo que no sea de 9 u 11 no es un cálculo válido."""
-    if not isinstance(resultado, tuple) or len(resultado) not in _LARGOS_VALIDOS:
+    if not isinstance(resultado, tuple) or len(resultado) not in (9, _LARGO_CALCULO):
         recibido = len(resultado) if isinstance(resultado, tuple) else type(resultado).__name__
         raise ErrorCom(
             f"Solid Edge devolvió {recibido} en lugar de 9 u 11 valores de propiedades "
@@ -103,7 +162,7 @@ def _desempaquetar(resultado: Any) -> dict[str, Any]:
     volumen, area, masa, cdg, cdv, momentos, principales, ejes, radios, *_ = resultado
     return {
         "volumen": float(volumen),
-        "area": float(area),
+        "area": None if area is None else float(area),
         "masa": float(masa),
         "centro_de_masa": _vector(cdg, 3),
         "centro_de_volumen": _vector(cdv, 3),
@@ -128,7 +187,7 @@ def _convertir(si: dict[str, Any], elegidas: dict[str, str]) -> dict[str, Any]:
     convertido = dict(si)
     convertido["masa"] = si["masa"] / fm
     convertido["volumen"] = si["volumen"] / fl**3
-    convertido["area"] = si["area"] / fl**2
+    convertido["area"] = None if si["area"] is None else si["area"] / fl**2
     convertido["densidad"] = None if si["densidad"] is None else si["densidad"] * fl**3 / fm
     for clave in ("centro_de_masa", "centro_de_volumen", "radios_de_giro"):
         convertido[clave] = [v / fl for v in si[clave]]
@@ -152,22 +211,37 @@ def propiedades(
 ) -> dict[str, Any]:
     """Propiedades físicas del documento.
 
-    `actualizado` dice si se recalcularon en esta llamada (con `densidad`, que modifica el
-    documento) o se leyeron las ya guardadas (`False`, solo lectura).
+    `actualizado` dice si se recalcularon en esta llamada (con `densidad` en pieza y chapa, que
+    modifica el documento; o el `Update()` de un ensamble desactualizado) o se leyó el último
+    cálculo (`False`, solo lectura).
     """
     tipo = exigir_tipo(doc, TIPOS_SOPORTADOS, "mass")
-    if densidad is not None:
-        resultado = _calcular_en_com(_objeto_de_calculo(doc, tipo), densidad)
+    actualizado = densidad is not None
+    densidad_leida = None
+    if tipo == "assembly":
+        if densidad is not None:
+            raise NoSoportado(
+                "Un ensamble no admite --density: la masa sale de los materiales de sus piezas "
+                "(una pieza sin material cuenta con densidad 1 kg/m3). Asignales un material."
+            )
+        crudo, actualizado = _leer_ensamble_en_com(doc)
+        resultado = _normalizar_ensamble(crudo)
+    elif densidad is not None:
+        resultado = _calcular_en_com(_objeto_de_calculo(doc), densidad)
     else:
-        resultado = _leer_guardadas_en_com(doc)
-        if resultado is None:
+        lectura = _normalizar_lectura_de_pieza(_leer_pieza_en_com(_objeto_de_calculo(doc)))
+        if lectura is None:
             raise ArgumentoInvalido(
                 "El documento no tiene propiedades físicas guardadas: pasá --density <kg/m3> "
-                "para calcularlas (modifica el estado del documento)."
+                "para calcularlas (modifica el estado del documento; recién se pueden leer sin "
+                "densidad después de guardarlo)."
             )
+        resultado, densidad_leida = lectura
     si = _desempaquetar(resultado)
     if densidad is not None:
         si["densidad"] = densidad
+    elif densidad_leida is not None:
+        si["densidad"] = densidad_leida
     else:
         si["densidad"] = si["masa"] / si["volumen"] if si["volumen"] > 0 else None
     convertido = _convertir(si, elegidas or {})
@@ -185,7 +259,7 @@ def propiedades(
     )
     return {
         **{clave: convertido[clave] for clave in claves},
-        "actualizado": densidad is not None,
+        "actualizado": actualizado,
         "unidades": convertido["unidades"],
     }
 

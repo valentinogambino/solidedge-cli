@@ -41,7 +41,8 @@ def _pieza(app, tipo=1, nombre="Pieza.par"):
 @pytest.fixture
 def pieza(app_falsa):
     doc = _pieza(app_falsa)
-    doc.fisicas_de_usuario = GUARDADAS
+    doc.fisicas_calculadas = GUARDADAS
+    doc.densidad_calculada = 2700.0
     return doc
 
 
@@ -53,7 +54,7 @@ def test_sin_densidad_lee_lo_guardado_y_no_escribe(cli, app_falsa, pieza):
     data = sobre["data"]
     assert set(data) == CLAVES
     assert data["masa"] == 5.4 and data["volumen"] == 0.002 and data["area"] == 0.1
-    assert data["densidad"] == pytest.approx(2700.0)
+    assert data["densidad"] == 2700.0
     assert data["centro_de_masa"] == [0.1, 0.2, 0.3]
     assert data["centro_de_volumen"] == [0.11, 0.21, 0.31]
     assert data["momentos_de_inercia"] == {
@@ -71,11 +72,33 @@ def test_sin_densidad_lee_lo_guardado_y_no_escribe(cli, app_falsa, pieza):
     assert data["unidades"]["masa"] == "kg" and data["unidades"]["longitud"] == "m"
 
 
-def test_sin_densidad_ni_propiedades_guardadas_da_exit_2(cli, app_falsa):
+def test_sin_densidad_lee_con_get_physical_properties_y_no_con_las_de_usuario(
+    cli, app_falsa, pieza
+):
+    cli("mass")
+
+    nombres = [llamada[0] for llamada in app_falsa.registro]
+    assert "Model.GetPhysicalProperties" in nombres
+    assert "GetUserPhysicalProperties" not in nombres
+
+
+def test_sin_densidad_ni_calculo_previo_da_exit_2(cli, app_falsa):
     _pieza(app_falsa)
     r, sobre = cli("mass")
     assert r.exit_code == 2 and "--density" in sobre["error"]["message"]
     assert app_falsa.escrituras == []
+
+
+def test_el_calculo_con_density_se_puede_leer_recien_despues_de_guardar(cli, app_falsa):
+    _pieza(app_falsa)
+
+    assert cli("mass", "--density", "2700")[0].exit_code == 0
+    assert cli("mass")[0].exit_code == 2  # verificado en vivo: Status 2 hasta guardar
+    assert cli("docs", "save")[0].exit_code == 0
+    r, sobre = cli("mass")
+
+    assert r.exit_code == 0
+    assert sobre["data"]["densidad"] == 2700.0 and sobre["data"]["actualizado"] is False
 
 
 def test_con_density_llama_con_kwargs_y_buffers(cli, app_falsa, pieza):
@@ -135,15 +158,40 @@ def test_units_invalida_da_exit_2(cli, pieza):
     assert r.exit_code == 2
 
 
-def test_chapa_y_ensamble_son_soportados(cli, app_falsa):
+def test_chapa_es_soportada(cli, app_falsa):
     chapa = _pieza(app_falsa, tipo=4, nombre="Chapa.psm")
-    chapa.fisicas_de_usuario = GUARDADAS
-    asm = app_falsa.agregar_documento("Conj.asm", ruta="C:\\p\\Conj.asm", tipo=3)
-    asm.fisicas_de_usuario = GUARDADAS
+    chapa.fisicas_calculadas = GUARDADAS
+    chapa.densidad_calculada = 2700.0
 
-    assert cli("mass", "--doc", "Chapa.psm")[0].exit_code == 0
+    r, sobre = cli("mass", "--doc", "Chapa.psm")
+
+    assert r.exit_code == 0 and sobre["data"]["masa"] == 5.4
+
+
+def test_ensamble_actualiza_y_no_informa_area(cli, app_falsa):
+    asm = app_falsa.agregar_documento("Conj.asm", ruta="C:\\p\\Conj.asm", tipo=3)
+
+    r, sobre = cli("mass", "--doc", "Conj.asm")
+
+    data = sobre["data"]
+    assert r.exit_code == 0
+    assert data["area"] is None and data["actualizado"] is True
+    assert data["masa"] == pytest.approx(7.85)  # FISICAS_POR_DEFECTO
+    assert len(data["ejes_principales"]) == 9
+    assert asm.PhysicalProperties.actualizaciones == 1
+
+    r, sobre = cli("mass", "--doc", "Conj.asm")
+    assert sobre["data"]["actualizado"] is False
+    assert asm.PhysicalProperties.actualizaciones == 1
+
+
+def test_ensamble_con_density_no_esta_soportado(cli, app_falsa):
+    app_falsa.agregar_documento("Conj.asm", ruta="C:\\p\\Conj.asm", tipo=3)
+
     r, sobre = cli("mass", "--density", "1000", "--doc", "Conj.asm")
-    assert r.exit_code == 0 and sobre["data"]["masa"] == pytest.approx(1.0)
+
+    assert r.exit_code == 6 and sobre["error"]["code"] == "no_soportado"
+    assert app_falsa.escrituras == []
 
 
 @pytest.mark.parametrize("tipo", [2, 6, 8])
@@ -198,7 +246,7 @@ def test_modo_humano(cli, pieza):
     assert r.exit_code == 0 and "masa" in r.stdout
 
 
-def test_tupla_incompleta_da_error_com(cli, app_falsa, pieza):
-    pieza.fisicas_de_usuario = (1.0, 2.0)
+def test_tupla_incompleta_da_error_com(cli, app_falsa, pieza, monkeypatch):
+    monkeypatch.setattr(ModeloFalso, "GetPhysicalProperties", lambda self, **kwargs: (1.0, 2.0))
     r, sobre = cli("mass")
     assert r.exit_code == 4 and sobre["error"]["code"] == "com_error"

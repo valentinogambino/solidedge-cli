@@ -165,3 +165,12 @@ def test_doc_inexistente_da_exit_5(cli, con_props):
 def test_sin_instancia_da_exit_3(cli_sin_instancia, comando):
     r, sobre = cli_sin_instancia("props", *comando)
     assert r.exit_code == 3 and sobre["ok"] is False
+
+
+def test_get_omite_las_propiedades_sin_nombre(cli, app_falsa):
+    doc = app_falsa.agregar_documento("Pieza.par", ruta="C:\p\Pieza.par", tipo=1)
+    con_propiedades(doc, {"ExtendedSummaryInformation": {"Status": 0, "": "", " ": ""}})
+
+    r, sobre = cli("props", "get")
+
+    assert [p["nombre"] for p in sobre["data"]["propiedades"]] == ["Status"]

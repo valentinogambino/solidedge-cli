@@ -73,6 +73,7 @@ ESCRITURAS = frozenset(
         "Properties.Add",
         "Property.Value=",
         "ComputePhysicalPropertiesWithSpecifiedDensity",
+        "PhysicalProperties.Update",
     }
 )
 
@@ -106,8 +107,14 @@ class DocumentoFalso(_ConFallos):
         self.Occurrences = ColeccionFalsa([])
         self.Models = ColeccionFalsa([])
         self.DesignEdgebarFeatures = ColeccionFalsa([])
-        self.fisicas_de_usuario: tuple | None = None
+        # Último cálculo de la sesión (9 valores) o None si nunca se calculó, y la geometría
+        # que da el cálculo de una pieza. Un ensamble tiene `PhysicalProperties`.
+        self.fisicas_calculadas: tuple | None = None
+        self.fisicas_pendientes: tuple | None = None
+        self.densidad_calculada = 0.0
         self.fisicas = FISICAS_POR_DEFECTO
+        if tipo == 3:
+            self.PhysicalProperties = FisicasDeEnsambleFalsas(self)
         # Exportación (F4): "escribir" deja un archivo con contenido, "nada" no escribe y
         # "vacio" lo deja en 0 bytes.
         self.modo_exportacion = "escribir"
@@ -118,17 +125,6 @@ class DocumentoFalso(_ConFallos):
             self.ModelLinks = EnlacesFalsos(self)
             self.ActiveSheet = HojaFalsa(self)
             self.Sheets = ColeccionFalsa([self.ActiveSheet])
-
-    def GetUserPhysicalProperties(self) -> tuple:
-        """Sin propiedades guardadas la llamada real falla (E_FAIL)."""
-        self.registro.append(("GetUserPhysicalProperties", self.Name))
-        if self.fisicas_de_usuario is None:
-            raise com_error(0x80004005, "Error no especificado")
-        return self.fisicas_de_usuario
-
-    def ComputePhysicalPropertiesWithSpecifiedDensity(self, **kwargs: Any) -> tuple:
-        """Cálculo de un ensamble: igual que el de un `Model`."""
-        return calcular_fisicas(self, **kwargs)
 
     @property
     def Dirty(self) -> bool:
@@ -145,6 +141,7 @@ class DocumentoFalso(_ConFallos):
         self.registro.append(("Save", self.Name))
         self._tocar("Save")
         self._sucio = False
+        self._consolidar_fisicas()
 
     def SaveAs(self, ruta: str) -> None:
         self.registro.append(("SaveAs", self.Name, ruta))
@@ -154,6 +151,13 @@ class DocumentoFalso(_ConFallos):
         self.FullName = ruta
         self.Name = ruta.replace("\\", "/").rsplit("/", 1)[-1]
         self._sucio = False
+        self._consolidar_fisicas()
+
+    def _consolidar_fisicas(self) -> None:
+        """Un cálculo con densidad recién se puede leer (`GetPhysicalProperties`) tras guardar."""
+        if self.fisicas_pendientes is not None:
+            self.fisicas_calculadas = self.fisicas_pendientes
+            self.fisicas_pendientes = None
 
     def SaveCopyAs(self, ruta: str) -> None:
         """Exporta por extensión sin reapuntar el documento (como la API real)."""
@@ -474,7 +478,77 @@ def calcular_fisicas(objeto: Any, **kwargs: Any) -> tuple:
     if set(kwargs) != _BUFFERS_FISICOS:
         raise com_error(0x8002000F, "Parameter not optional")
     volumen, area, _masa, *resto = doc.fisicas
-    return (volumen, area, volumen * kwargs["Density"], *resto, 0.99, 0)
+    doc.fisicas_pendientes = (volumen, area, volumen * kwargs["Density"], *resto)
+    doc.densidad_calculada = kwargs["Density"]
+    return (*doc.fisicas_pendientes, 0.99, 0)
+
+
+def leer_fisicas(objeto: Any, **kwargs: Any) -> tuple:
+    """Imita `Model.GetPhysicalProperties`: 13 valores con el estado primero.
+
+    Sin cálculo previo devuelve estado 2, ceros y `None` en los arreglos (verificado en vivo).
+    """
+    doc = getattr(objeto, "doc", objeto)
+    doc.registro.append(("Model.GetPhysicalProperties", kwargs))
+    if set(kwargs) != _BUFFERS_FISICOS:
+        raise com_error(0x8002000F, "Parameter not optional")
+    if doc.fisicas_calculadas is None:
+        return (2, 0.0, 0.0, 0.0, 0.0, 0.0, None, None, None, None, None, None, 0.0)
+    volumen, area, masa, *resto = doc.fisicas_calculadas
+    return (1, doc.densidad_calculada, 0.99, volumen, area, masa, *resto, 0.99)
+
+
+class FisicasDeEnsambleFalsas:
+    """`PhysicalProperties` de un ensamble: `Update()` y `GetAssemblyPhysicalProperties()`.
+
+    Devuelve (masa, volumen, área, cdm, cdv, momentos, eje1, eje2, eje3, principales, radios,
+    enfermo, estado); el área de un ensamble viene en -1 (verificado en vivo).
+    """
+
+    def __init__(self, doc: DocumentoFalso) -> None:
+        self.doc = doc
+        self.IsUpToDate = False
+        self.actualizaciones = 0
+
+    def Update(self) -> None:
+        self.doc.registro.append(("PhysicalProperties.Update", self.doc.Name))
+        self.IsUpToDate = True
+        self.actualizaciones += 1
+
+    def GetAssemblyPhysicalProperties(self, **kwargs: Any) -> tuple:
+        self.doc.registro.append(("PhysicalProperties.GetAssemblyPhysicalProperties", kwargs))
+        if not self.IsUpToDate:
+            return (
+                0.0,
+                0.0,
+                0.0,
+                (0.0,) * 3,
+                (0.0,) * 3,
+                (0.0,) * 6,
+                (1.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0),
+                (0.0,) * 3,
+                (0.0,) * 3,
+                False,
+                False,
+            )
+        volumen, _area, masa, cdg, cdv, momentos, principales, ejes, radios = self.doc.fisicas
+        return (
+            masa,
+            volumen,
+            -1.0,
+            cdg,
+            cdv,
+            momentos,
+            ejes[0:3],
+            ejes[3:6],
+            ejes[6:9],
+            principales,
+            radios,
+            False,
+            True,
+        )
 
 
 class ModelosDeChapaFalsos(ColeccionFalsa):
@@ -524,6 +598,9 @@ class ModeloFalso:
 
     def ComputePhysicalPropertiesWithSpecifiedDensity(self, **kwargs: Any) -> tuple:
         return calcular_fisicas(self, **kwargs)
+
+    def GetPhysicalProperties(self, **kwargs: Any) -> tuple:
+        return leer_fisicas(self, **kwargs)
 
 
 class FeatureFalsa:
