@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 from collections import defaultdict
 from typing import Any
 
@@ -630,8 +631,10 @@ class DocumentosFalsos(_ConFallos):
             tipo = TIPO_POR_EXTENSION.get(prog_id.rsplit(".", 1)[-1].lower(), 1)
         return self._agregar(DocumentoFalso(f"Document{len(self._documentos) + 1}", tipo=tipo))
 
-    def Open(self, ruta: str, flags: int | None = None) -> DocumentoFalso:
-        self.registro.append(("Documents.Open", ruta, flags))
+    def Open(self, ruta: str) -> DocumentoFalso:
+        # El Open real no tiene flag de solo lectura (verificado en vivo, SE 226.00.01.04):
+        # el documento queda en solo lectura solo si el archivo tiene el atributo de Windows.
+        self.registro.append(("Documents.Open", ruta))
         self._tocar("Open")
         nombre = ruta.replace("\\", "/").rsplit("/", 1)[-1]
         config = self.al_abrir.get(nombre, {})
@@ -639,7 +642,10 @@ class DocumentosFalsos(_ConFallos):
             raise config["error"]
         extension = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
         doc = DocumentoFalso(
-            nombre, ruta=ruta, tipo=TIPO_POR_EXTENSION.get(extension, 1), solo_lectura=flags == 1
+            nombre,
+            ruta=ruta,
+            tipo=TIPO_POR_EXTENSION.get(extension, 1),
+            solo_lectura=os.path.exists(ruta) and not os.access(ruta, os.W_OK),
         )
         doc.modo_exportacion = config.get("modo_exportacion", "escribir")
         if "desarrollo" in config:

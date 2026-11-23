@@ -136,7 +136,7 @@ def test_salida_existente_sin_overwrite_falla_solo_ese_archivo(cli, app_falsa, t
     assert resultados[0]["ok"] is False and resultados[0]["error"]["code"] == "solo_lectura"
     assert resultados[1]["ok"] is True
     assert (tmp_path / "A.stp").read_bytes() == b"viejo"
-    assert [c[2] for c in _llamadas(app_falsa, "Documents.Open")] == [None]  # solo B
+    assert len(_llamadas(app_falsa, "Documents.Open")) == 1  # solo B
 
     r, sobre = cli("export", str(tmp_path / "*.par"), "--format", "step", "--overwrite")
     assert r.exit_code == 0

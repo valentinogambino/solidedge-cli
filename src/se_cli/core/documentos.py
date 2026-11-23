@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from se_cli.core.constants import DocumentAccess, DocumentTypeConstants
+from se_cli.core.constants import DocumentTypeConstants
 from se_cli.core.errors import (
     ArgumentoInvalido,
     DocNoEncontrado,
@@ -289,9 +289,11 @@ def _por_nombre(items: list[tuple[int, Any]], texto: str) -> list[tuple[int, Any
 
 # --- Escritura -----------------------------------------------------------------------------
 
-# Flag de `Documents.Open` para abrir en solo lectura: se asume `DocumentAccess.igReadOnly`.
-# Validar en vivo (ver el informe de F2).
-FLAG_ABRIR_SOLO_LECTURA = int(DocumentAccess.igReadOnly)
+AVISO_SOLO_LECTURA = (
+    "Solid Edge no permite abrir en solo lectura por API: `Documents.Open` no tiene ese flag "
+    "(su segundo argumento es DocRelationAutoServer). El documento se abrió con acceso normal; "
+    "solo queda en solo lectura si el archivo tiene el atributo de solo lectura de Windows."
+)
 
 
 def abrir(app: Any, ruta: str, solo_lectura: bool = False) -> dict[str, Any]:
@@ -303,11 +305,11 @@ def abrir(app: Any, ruta: str, solo_lectura: bool = False) -> dict[str, Any]:
             _leer(doc.Activate)
             return {**descripcion_de(app, doc, indice), "ya_abierto": True}
 
-    if solo_lectura:
-        doc = _leer(lambda: app.Documents.Open(absoluta, FLAG_ABRIR_SOLO_LECTURA))
-    else:
-        doc = _leer(lambda: app.Documents.Open(absoluta))
-    return {**_describir_nuevo(app, doc), "ya_abierto": False}
+    doc = _leer(lambda: app.Documents.Open(absoluta))
+    datos = {**_describir_nuevo(app, doc), "ya_abierto": False}
+    if solo_lectura and not datos["solo_lectura"]:
+        datos["advertencia"] = AVISO_SOLO_LECTURA
+    return datos
 
 
 def _describir_nuevo(app: Any, doc: Any) -> dict[str, Any]:

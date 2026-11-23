@@ -128,11 +128,13 @@ def crear_cubo(part):
     vertices = [(0.0, 0.0), (LADO_CUBO, 0.0), (LADO_CUBO, LADO_CUBO), (0.0, LADO_CUBO)]
     for origen, destino in zip(vertices, vertices[1:] + vertices[:1], strict=True):
         reintentar(lambda origen=origen, destino=destino: lineas.AddBy2Points(*origen, *destino))
-    estado = reintentar(lambda: perfil.End(PERFIL_CERRADO))
-    if estado != 0:
-        raise RuntimeError(f"Profile.End devolvió {estado} al validar el rectángulo.")
+    # Verificado en vivo (SE 226.00.01.04): End(igProfileClosed) devuelve -103 aunque el
+    # rectángulo es válido (une los extremos coincidentes). El resultado real es la operación.
+    reintentar(lambda: perfil.End(PERFIL_CERRADO))
     modelos = reintentar(lambda: part.Models)
     reintentar(lambda: modelos.AddFiniteExtrudedProtrusion(1, (perfil,), LADO_POSITIVO, LADO_CUBO))
+    if reintentar(lambda: modelos.Count) < 1:
+        raise RuntimeError("La extrusión no generó ninguna operación en Models.")
 
 
 def crear_vista(draft, ruta_part):

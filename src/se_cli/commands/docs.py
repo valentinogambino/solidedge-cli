@@ -44,7 +44,8 @@ def abrir(
     ctx: typer.Context,
     ruta: Annotated[str, typer.Argument(help="Archivo a abrir.")],
     read_only_doc: Annotated[
-        bool, typer.Option("--read-only-doc", help="Abrí el documento en solo lectura.")
+        bool,
+        typer.Option("--read-only-doc", help="Pedí solo lectura (la API no lo soporta: avisa)."),
     ] = False,
 ) -> None:
     """Abrí un documento; si ya está abierto, lo activa."""

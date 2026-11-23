@@ -112,7 +112,7 @@ def test_open_camino_feliz(cli, app_falsa, archivo):
     assert sobre["data"]["nombre"] == "Pieza.par"
     assert sobre["data"]["ya_abierto"] is False
     assert sobre["data"]["activo"] is True
-    assert ("Documents.Open", str(archivo), None) in app_falsa.registro
+    assert ("Documents.Open", str(archivo)) in app_falsa.registro
     assert app_falsa._alertas is True
 
 
@@ -122,11 +122,25 @@ def test_open_pasa_ruta_absoluta(cli, app_falsa, archivo, monkeypatch):
     assert app_falsa.registro[-1][1] == str(archivo)
 
 
-def test_open_solo_lectura(cli, app_falsa, archivo):
+def test_open_read_only_doc_avisa_que_la_api_no_lo_soporta(cli, app_falsa, archivo):
     r, sobre = cli("docs", "open", str(archivo), "--read-only-doc")
 
     assert r.exit_code == 0
+    assert sobre["data"]["solo_lectura"] is False
+    assert "atributo de solo lectura" in sobre["data"]["advertencia"]
+    assert app_falsa.registro[-1] == ("Documents.Open", str(archivo))
+
+
+def test_open_archivo_con_atributo_de_solo_lectura(cli, app_falsa, archivo):
+    archivo.chmod(0o444)
+    try:
+        r, sobre = cli("docs", "open", str(archivo), "--read-only-doc")
+    finally:
+        archivo.chmod(0o644)
+
+    assert r.exit_code == 0
     assert sobre["data"]["solo_lectura"] is True
+    assert "advertencia" not in sobre["data"]
 
 
 def test_open_ruta_inexistente_da_exit_5(cli, app_falsa, tmp_path):
