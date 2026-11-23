@@ -8,8 +8,13 @@ permissions:
   contents: read
 jobs:
   ci:
-    # devenv debe permitir acceso a repos del usuario (access_level: user).
-    uses: valentinogambino/devenv/.github/workflows/ci-proyecto.yml@main
-    with:
-      python: '3.11'
-      runner: windows-latest
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version-file: .python-version
+      - run: uv sync
+      - run: uv run pytest
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
