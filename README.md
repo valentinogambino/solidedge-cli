@@ -19,7 +19,7 @@ Van antes del comando: `se --json docs list`.
 
 | opción | efecto |
 |---|---|
-| `--json` | Salida `{ok, data, error}` en una línea por stdout, sin colores. Sin `--json` sale una tabla y los errores van a stderr. |
+| `--json` | Salida `{ok, data, error}` en una línea por stdout, sin colores. Sin `--json` sale una tabla y los errores van a stderr. Con `--json` también los errores de uso de Typer (subcomando inexistente, argumento faltante, opción o valor inválido) salen como sobre `argumento_invalido`, exit 2. |
 | `--readonly` | Bloquea todo comando que modifica (`open`, `new`, `save`, `save-as`, `close`, `quit`, `connect --launch`): exit 6, `solo_lectura`, sin tocar Solid Edge. |
 | `--dry-run` | Los comandos que modifican informan qué harían (`"dry_run": true`) sin llamar a COM de escritura. Los argumentos se validan igual. |
 | `--version` | Versión de `se`. |

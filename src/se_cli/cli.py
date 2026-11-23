@@ -18,8 +18,9 @@ from se_cli.commands import (
     variables,
 )
 from se_cli.ejecucion import Opciones
+from se_cli.errores_de_uso import GrupoSe
 
-app = typer.Typer(add_completion=False, invoke_without_command=True)
+app = typer.Typer(add_completion=False, invoke_without_command=True, cls=GrupoSe)
 sesion.registrar(app)
 app.add_typer(docs.app, name="docs")
 app.add_typer(variables.app, name="vars")
