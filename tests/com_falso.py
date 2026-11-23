@@ -118,7 +118,9 @@ class DocumentoFalso(_ConFallos):
         # Exportación (F4): "escribir" deja un archivo con contenido, "nada" no escribe y
         # "vacio" lo deja en 0 bytes.
         self.modo_exportacion = "escribir"
-        self.Windows = ColeccionFalsa([VentanaFalsa(self)])
+        self.Windows = ColeccionFalsa(
+            [VentanaDeHojaFalsa(self) if tipo == 2 else VentanaFalsa(self)]
+        )
         if tipo == 4:
             con_chapa(self)
         if tipo == 2:
@@ -318,6 +320,13 @@ class VistaFalsa:
                 archivo.write(b"imagen")
         elif self.doc.modo_exportacion == "vacio":
             open(ruta, "wb").close()
+
+
+class VentanaDeHojaFalsa(VistaFalsa):
+    """`SheetWindow` de un Draft: no tiene `View`; `Fit` y `SaveAsImage` son de la ventana."""
+
+    def __init__(self, doc: DocumentoFalso) -> None:
+        super().__init__(doc)
 
 
 class VentanaFalsa:

@@ -75,12 +75,16 @@ def _exportar_dxf(doc: Any, ruta: str) -> None:
 
 
 def _exportar_png(doc: Any, ruta: str) -> None:
-    """PNG de la vista de la ventana del documento: `Windows.Item(1).View.SaveAsImage`."""
+    """PNG de la ventana del documento.
+
+    Pieza, chapa y ensamble: `Windows.Item(1).View.SaveAsImage`. El `SheetWindow` de un Draft no
+    tiene `View`: ahí `SaveAsImage` y `Fit` son de la ventana (verificado en vivo).
+    """
     ventana = leer(lambda: doc.Windows.Item(1))
-    vista = leer(lambda: ventana.View)
+    destino = acceso.opcional(lambda: ventana.View) or ventana
     # Un documento recién abierto no está encuadrado: sin `Fit` el modelo sale chico y corrido.
-    acceso.opcional(vista.Fit)
-    leer(lambda: vista.SaveAsImage(ruta, ANCHO_PNG, ALTO_PNG))
+    acceso.opcional(destino.Fit)
+    leer(lambda: destino.SaveAsImage(ruta, ANCHO_PNG, ALTO_PNG))
 
 
 # --- Formatos --------------------------------------------------------------------------------
