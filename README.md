@@ -72,6 +72,10 @@ se --json docs open C:\p\Pieza.par [--read-only-doc]
 # {"ok": true, "data": {"indice": 1, "nombre": "Pieza.par", ..., "ya_abierto": false}, "error": null}
 ```
 Ruta inexistente: exit 5. Si ya estaba abierto lo activa y devuelve `"ya_abierto": true`.
+`--read-only-doc` **no puede abrir en solo lectura**: `Documents.Open` no tiene ese flag (su
+segundo argumento es `DocRelationAutoServer`). El documento se abre normal, con `solo_lectura`
+real y un `advertencia` si no quedó en solo lectura; solo queda así si el archivo tiene el
+atributo de solo lectura de Windows.
 
 ```powershell
 se --json docs new part [--template C:\p\base.par]
@@ -180,6 +184,16 @@ Sin `--density` lee las propiedades físicas ya guardadas en el modelo (solo lec
 lo que modifica el estado del documento: lo bloquea `--readonly` y `--dry-run` solo informa.
 Solo pieza, chapa y ensamble; otro tipo de documento da exit 2.
 
+En **pieza y chapa** la lectura sin densidad usa `Model.GetPhysicalProperties` (`Status` 1 = hay
+propiedades guardadas; 2 = no hay, todo en cero). Un cálculo con `--density` recién se puede leer
+sin densidad después de guardar el documento. `GetUserPhysicalProperties` solo devuelve valores
+cargados a mano y no sirve. En un **ensamble** no existe cálculo con densidad (`--density` da exit
+6, `no_soportado`): la masa sale de los materiales de las piezas con
+`PhysicalProperties.GetAssemblyPhysicalProperties` (corre `Update()` si está desactualizado, y
+entonces `actualizado: true`); una pieza sin material cuenta con densidad 1 kg/m3 y el ensamble no
+informa el área (`area: null`). Verificado: cubo de 50 mm a 7850 kg/m3 da volumen 1.25e-4 m3, área
+0.015 m2 y masa 0.98125 kg.
+
 ### Ensambles y operaciones
 
 ```powershell
@@ -199,7 +213,9 @@ se --json features list
 # {"ok": true, "data": {"cantidad": 2, "operaciones": [{"indice": 1, "nombre": "ExtrudedProtrusion_1", "tipo": "ExtrudedProtrusion", "suprimida": false, "estado": "ok"}, {"indice": 2, "nombre": "ExtrudedCutout_1", "tipo": "ExtrudedCutout", "suprimida": true, "estado": "suppressed"}]}, "error": null}
 ```
 `indice` es 1-based. `tipo` sale de `FeatureTypeConstants` (el entero si no tiene nombre). Solo
-pieza y chapa: otro tipo da exit 2.
+pieza y chapa: otro tipo da exit 2. Solid Edge marca el documento como modificado (`Dirty`) apenas
+se lee `Features.Count`, y `Dirty` no se puede limpiar: después de `features list` un `docs close`
+sin flags se niega y pide `--save` o `--discard`.
 
 ## Exportar y Draft
 
@@ -207,13 +223,15 @@ Los tres comandos escriben archivos (`export` además abre y cierra documentos e
 cuentan como que modifican: `--readonly` los bloquea (exit 6) y `--dry-run` informa qué harían
 sin tocar Solid Edge ni el disco. Corren con `DisplayAlerts` apagado (se restaura siempre).
 
-**Estado de la validación:** todo F4 se probó contra un COM falso. Las llamadas a Solid Edge
-(`SaveCopyAs` por extensión, `View.SaveAsImage`, `ModelLinks.Add`, `DrawingViews.Add*View`,
-`SaveAsFlatDXFEx`, tamaños de hoja) todavía **no se validaron en vivo**; cada una está aislada en
-una función pequeña de `src/se_cli/core/` para corregirla fácil.
+**Estado de la validación:** F4 se validó en vivo el 2026-11-23 contra Solid Edge 2026 Community
+Edition 226.00.01.04 (ver la tabla de supuestos al final). Cada llamada a Solid Edge está aislada
+en una función pequeña de `src/se_cli/core/`.
 
-**Marca de agua:** en Community Edition el PDF y el DXF pueden salir con marca de agua. Todavía no
-se verificó, así que esos resultados traen `"marca_de_agua": "sin verificar"` y una `nota`.
+**Marca de agua (verificada mirando los archivos):** el **PDF** lleva la leyenda "Solid Edge
+Community Edition" en gris claro, abajo a la izquierda de cada hoja, dibujada con trazos (no es
+texto: buscar la cadena en el PDF no la encuentra). El **DXF** (de un Draft y del desarrollo de una
+chapa) no la trae, ni como texto ni como geometría; el PNG tampoco. Los resultados de `pdf` y `dxf`
+traen `"marca_de_agua": "presente"` o `"ausente"` y una `nota`.
 
 ### Formatos y tipos de documento
 
@@ -225,7 +243,7 @@ se verificó, así que esos resultados traen `"marca_de_agua": "sin verificar"` 
 | `igs` | `iges` | `.igs` (también `.iges`) | `part`, `sheetmetal`, `assembly` |
 | `pdf` | | `.pdf` | `draft` |
 | `dxf` | | `.dxf` | `draft` |
-| `png` | | `.png` | `part`, `sheetmetal`, `assembly`, `draft` (la vista de la ventana, 1920x1080) |
+| `png` | | `.png` | `part`, `sheetmetal`, `assembly`, `draft` (la ventana encuadrada con `Fit`, 1920x1080; un Draft puede salir con el rotulo recortado por la proporcion 16:9) |
 
 Los documentos síncronos (`syncpart`, ...) se tratan como su versión ordenada. Un formato que no
 encaja con el tipo del documento da exit 2 antes de escribir nada. Todo sale por `SaveCopyAs`
@@ -279,7 +297,7 @@ se --json --dry-run export .\*.par --format step
 
 ```powershell
 se --json draft from-part C:\p\Pieza.par --views front,top,right,iso --scale auto --sheet A3 --pdf
-# {"ok": true, "data": {"draft": "C:\\p\\Pieza.dft", "modelo": "C:\\p\\Pieza.par", "hoja": {"nombre": "A3", "ancho": 0.42, "alto": 0.297, "origen": "solicitada"}, "escala": "1:2", "vistas": [{"nombre": "front", "orientacion": "igFrontView", "x": 0.1125, "y": 0.10425}, {"nombre": "top", "orientacion": "igTopView", "x": 0.1125, "y": 0.22275}, {"nombre": "right", "orientacion": "igRightView", "x": 0.3075, "y": 0.10425}, {"nombre": "iso", "orientacion": "igTopFrontRightView", "x": 0.3075, "y": 0.22275}], "abierto": false, "escala_auto": true, "pdf": "C:\\p\\Pieza.pdf", "pdf_bytes": 20480, "marca_de_agua": "sin verificar", "nota": "En Community Edition la salida puede llevar marca de agua; todavía no se validó en vivo."}, "error": null}
+# {"ok": true, "data": {"draft": "C:\\p\\Pieza.dft", "modelo": "C:\\p\\Pieza.par", "hoja": {"nombre": "A3", "ancho": 0.42, "alto": 0.297, "origen": "solicitada", "fondo": "A3-Sheet"}, "escala": "1:2", "vistas": [{"nombre": "front", "orientacion": "igFrontView", "x": 0.1125, "y": 0.10425}, {"nombre": "top", "orientacion": "igTopView", "x": 0.1125, "y": 0.22275}, {"nombre": "right", "orientacion": "igRightView", "x": 0.3075, "y": 0.10425}, {"nombre": "iso", "orientacion": "igTopFrontRightView", "x": 0.3075, "y": 0.22275}], "abierto": false, "escala_auto": true, "pdf": "C:\\p\\Pieza.pdf", "pdf_bytes": 20480, "marca_de_agua": "presente", "nota": "Community Edition agrega la leyenda 'Solid Edge Community Edition' en gris claro, abajo a la izquierda de cada hoja. Va dibujada con trazos, no como texto."}, "error": null}
 ```
 Crea un Draft nuevo (con `--template` si se pasa), enlaza el modelo (`.par`, `.psm` o `.asm`; si
 no existe, exit 5), coloca las vistas, lo guarda en `--out` (por defecto junto al modelo, con
@@ -294,7 +312,10 @@ medirlo para `--scale auto` y no estaba abierto.
   más grande entre 5:1, 2:1, 1:1, 1:2, 1:5, 1:10, 1:20, 1:50 y 1:100 con la que entran todas las
   vistas en su celda, usando la caja del modelo (`Body.GetRange`, o `GetRangeBox` por ocurrencia
   en un ensamble). Si la API no la da, usa 1:1 y devuelve `"escala_auto": false`.
-- `--sheet`: `A5` a `A0` apaisadas. Sin esto se usa la hoja de la plantilla (o A3 si no se puede leer).
+- `--sheet`: `A5` a `A0` apaisadas. Sin esto se usa la hoja de la plantilla (A2 en la ISO Metric,
+  o A3 si no se puede leer). Además del tamaño se reemplaza el fondo de la hoja (marco y cuadro de
+  rotulación) por el `A<n>-Sheet` de la plantilla (`hoja.fondo`); la ISO Metric solo trae A4, A3,
+  A2 y A1, así que en A5 y A0 `fondo` es `null` y el marco sigue siendo el de A2.
 - Las vistas se reparten en una grilla de celdas sin superposición: la frontal abajo a la
   izquierda, la superior encima, la derecha al lado y la isométrica en la esquina libre. Se deja un
   margen de 15 mm y 30 mm abajo para el cuadro de rotulación.
@@ -303,26 +324,45 @@ medirlo para `--scale auto` y no estaba abierto.
 
 ```powershell
 se --json sheetmetal flat-dxf C:\p\Chapa.psm --out C:\salida\chapa.dxf
-# {"ok": true, "data": {"entrada": "C:\\p\\Chapa.psm", "documento": "Chapa.psm", "tipo": "sheetmetal", "formato": "dxf", "salida": "C:\\salida\\chapa.dxf", "ok": true, "bytes": 4096, "duracion_s": 0.7, "marca_de_agua": "sin verificar", "nota": "En Community Edition la salida puede llevar marca de agua; todavía no se validó en vivo."}, "error": null}
+# {"ok": true, "data": {"entrada": "C:\\p\\Chapa.psm", "documento": "Chapa.psm", "tipo": "sheetmetal", "formato": "dxf", "salida": "C:\\salida\\chapa.dxf", "ok": true, "bytes": 4096, "duracion_s": 0.7, "marca_de_agua": "ausente", "nota": "El DXF no trae la leyenda de Community Edition."}, "error": null}
 ```
 Exporta el desarrollo (flat pattern) de una chapa. Toma un archivo `.psm` (si no está abierto se
 abre y se cierra sin guardar), `--doc <selector>` o el documento activo. Un documento que no es
 chapa da exit 2. Usa el desarrollo que la chapa **ya tiene** (`Models.SaveAsFlatDXFEx` con
 `UseFlatPatternModel=True`, sin elegir cara, arista ni vértice); si no tiene, sale con exit 5 y
-explica que hay que crearlo en Solid Edge: generarlo exige elegir geometría. Misma regla de
+explica que hay que crearlo en Solid Edge: generarlo exige elegir geometría.
+Verificado: con un desarrollo ya guardado en el archivo, `SaveAsFlatDXFEx` con `None` exporta el
+contorno (sin marca de agua). Crear el desarrollo por API es posible (`FlatPatternModels.Add(modelo)`
+y `FlatPatterns.Add(arista, cara, vértice)` con la primera cara del cuerpo; cortó 50x100 mm
+correctamente), pero en la misma sesión el DXF sale sin entidades: hace falta guardar y reabrir el
+archivo. Por eso sigue sin crearse solo; sería una decisión de diseño (por ejemplo un `--create`). Misma regla de
 `--overwrite` y de verificación de tamaño que `export`.
 
-### Supuestos de la API para validar en vivo
+### Supuestos de la API (verificados en vivo)
 
-| qué | llamada usada |
-|---|---|
-| STEP, STL, Parasolid, IGES, PDF, DXF | `doc.SaveCopyAs(ruta)`, el formato sale de la extensión; sin opciones de STEP/STL |
-| PNG | `doc.Windows.Item(1).View.SaveAsImage(ruta, 1920, 1080)` con el documento activado |
-| Draft nuevo | `Documents.Add("SolidEdge.DraftDocument")` o la plantilla |
-| Hoja | `ActiveSheet.SheetSetup.SheetSizeOption = PaperSizeConstants.igIso<A>Wide`; medidas leídas de `SheetWidth`/`SheetHeight` |
-| Enlace y vistas | `ModelLinks.Add(ruta)`; `ActiveSheet.DrawingViews.AddPartView`, `AddSheetMetalView` o `AddAssemblyView` con `(enlace, orientación, escala, x, y, 0)`; la `x, y` es el centro de la vista |
-| Caja del modelo | `Models.Item(1).Body.GetRange([0]*3, [0]*3)` (lee los puntos del retorno); ensamble: `Occurrence.GetRangeBox` |
-| Desarrollo | `FlatPatternModels.Count`; `Models.SaveAsFlatDXFEx(ruta, None, None, None, True)` |
+Validados el 2026-11-23 contra Solid Edge 2026 Community Edition 226.00.01.04.
+
+| qué | llamada | resultado |
+|---|---|---|
+| conexión | `GetActiveObject("SolidEdge.Application")` en un hilo STA | verificado |
+| `Documents.Add` / `FullName` de un documento nuevo | `Add("SolidEdge.<Tipo>Document")` | verificado; `FullName` viene sin carpeta (`ruta: null`) |
+| `Documents.Open(ruta, flag)` solo lectura | segundo argumento = `igReadOnly` | **corregido**: ese argumento es `DocRelationAutoServer`, no hay flag; solo el atributo de Windows da solo lectura |
+| `Dirty = False` antes de `Close` | para evitar el diálogo | no soportado (E_FAIL, solo lectura); alcanza `DisplayAlerts=False` + `Close(False)` |
+| `Variables.Query` / `Add` / `Value` / `Formula` | `Variables.Query("*")`, `Add(nombre, valor, unidad)` | verificado, incluido `--formula` y `--force` |
+| `doc.Properties` y `Custom` | conjuntos `SummaryInformation`, `Custom`, ... | verificado; hay entradas sin nombre (se omiten) y las fechas vienen en hora local sin zona |
+| `GetUserPhysicalProperties` | masa sin densidad | **corregido**: solo devuelve valores cargados a mano; se usa `Model.GetPhysicalProperties` |
+| `ComputePhysicalPropertiesWithSpecifiedDensity` | pieza y chapa, kwargs con buffers | verificado (cubo 50 mm, 7850 kg/m3: 0.98125 kg) |
+| masa de un ensamble | `doc.ComputePhysicalPropertiesWithSpecifiedDensity` | **corregido**: no existe; se usa `PhysicalProperties.Update()` + `GetAssemblyPhysicalProperties()` (sin densidad ni área) |
+| `Occurrence`, `GetRangeBox`, `Features` | `asm tree`, `features list` | verificado; leer `Features.Count` ensucia el documento |
+| STEP, STL, Parasolid, IGES, PDF, DXF | `doc.SaveCopyAs(ruta)`, el formato sale de la extensión | verificado en pieza, chapa, ensamble y Draft; STEP con cabecera ISO-10303-21, STL binario con 12 triángulos por cubo, `.x_t` con cabecera Parasolid, IGES con sección de inicio |
+| PNG | `View.SaveAsImage(ruta, 1920, 1080)` | verificado en pieza, chapa y ensamble (con `View.Fit()` antes); **corregido** en Draft: su `SheetWindow` no tiene `View`, `Fit` y `SaveAsImage` son de la ventana |
+| Draft nuevo | `Documents.Add("SolidEdge.DraftDocument")` | verificado (hoja A2 por defecto) |
+| Hoja | `ActiveSheet.SheetSetup.SheetSizeOption = igIso<A>Wide` | verificado; **corregido**: además hay que reemplazar el fondo (`ActiveSheet.Background = Sections.BackgroundSection.Sheets.Item("A3-Sheet")`) o el marco y el rotulo salen recortados |
+| Enlace y vistas | `ModelLinks.Add(ruta)`; `DrawingViews.AddPartView`, `AddSheetMetalView`, `AddAssemblyView` con `(enlace, orientación, escala, x, y, 0)` | verificado: los tres existen y `x, y` es el centro de la vista; las vistas quedan dentro de la hoja y sin superponerse |
+| Caja del modelo | `Models.Item(1).Body.GetRange([0]*3, [0]*3)`; ensamble `Occurrence.GetRangeBox` | verificado (devuelve mínimo y máximo); la escala `auto` es razonable |
+| Desarrollo | `FlatPatternModels.Count`; `Models.SaveAsFlatDXFEx(ruta, None, None, None, True)` | verificado con un desarrollo guardado en el archivo; sin desarrollo da exit 5 (ver arriba) |
+| `Application.Quit` y `connect --launch` | | no validados a propósito (la instancia no se cierra ni se relanza) |
+| hresult de "ocupado" | `RPC_E_CALL_REJECTED` / `RPC_E_SERVERCALL_RETRYLATER` | no se vio ninguno durante las pruebas |
 
 ## Códigos de salida
 
