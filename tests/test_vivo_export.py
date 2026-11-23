@@ -4,8 +4,7 @@ Solo crean documentos nuevos (`docs new`) y escriben en `tmp_path`; al terminar 
 `--discard` únicamente los que ellas crearon. No tocan ni cierran documentos del usuario. Aun así,
 avisá antes de correrlas: abren y cierran documentos en la sesión viva.
 
-Varias llamadas de la API todavía no se validaron en vivo (ver el README), así que algunos tests
-aceptan también el exit 4 (error COM) y comprueban que el sobre JSON sea válido.
+Validadas en vivo el 2026-11-23 (SE 226.00.01.04): los tests exigen exit 0 (o el exit documentado).
 """
 
 import json
@@ -24,14 +23,23 @@ def _correr(*args: str):
 
 @contextmanager
 def _documento_nuevo(tipo: str):
-    """Documento nuevo y vacío; se descarta al salir (nunca toca otros documentos)."""
+    """Documento nuevo y vacío; se descarta al salir (nunca toca otros documentos).
+
+    Se lo cierra por su ruta completa si se guardó con `save-as` (cambia el nombre).
+    """
     r, sobre = _correr("docs", "new", tipo)
     assert r.exit_code == 0, r.output
     nombre = sobre["data"]["nombre"]
     try:
         yield nombre
     finally:
-        _correr("docs", "close", nombre, "--discard")
+        r, sobre = _correr("docs", "list")
+        for doc in sobre["data"]["documentos"]:
+            if doc["nombre"] == nombre or doc["ruta"] == _RUTAS.get(nombre):
+                _correr("docs", "close", doc["ruta"] or doc["nombre"], "--discard")
+
+
+_RUTAS: dict[str, str] = {}
 
 
 @pytest.mark.live
@@ -39,9 +47,8 @@ def test_export_png_de_un_part_nuevo(tmp_path):
     with _documento_nuevo("part") as nombre:
         destino = tmp_path / "vista.png"
         r, sobre = _correr("export", "--format", "png", "--doc", nombre, "--out", str(destino))
-        assert r.exit_code in (0, 4), sobre
-        if r.exit_code == 0:
-            assert destino.stat().st_size > 0
+        assert r.exit_code == 0, sobre
+        assert destino.stat().st_size > 0
 
 
 @pytest.mark.live
@@ -49,9 +56,8 @@ def test_export_pdf_de_un_draft_nuevo(tmp_path):
     with _documento_nuevo("draft") as nombre:
         destino = tmp_path / "plano.pdf"
         r, sobre = _correr("export", "--format", "pdf", "--doc", nombre, "--out", str(destino))
-        assert r.exit_code in (0, 4), sobre
-        if r.exit_code == 0:
-            assert sobre["data"]["marca_de_agua"] == "presente"
+        assert r.exit_code == 0, sobre
+        assert sobre["data"]["marca_de_agua"] == "presente"
 
 
 @pytest.mark.live
@@ -74,7 +80,7 @@ def test_flat_dxf_de_una_chapa_nueva_sin_desarrollo(tmp_path):
         r, sobre = _correr(
             "sheetmetal", "flat-dxf", "--doc", nombre, "--out", str(tmp_path / "chapa.dxf")
         )
-        assert r.exit_code in (4, 5), sobre
+        assert r.exit_code == 5, sobre
         assert not (tmp_path / "chapa.dxf").exists()
 
 
@@ -83,11 +89,11 @@ def test_draft_from_part_de_un_part_nuevo_guardado_en_tmp(tmp_path):
     with _documento_nuevo("part") as nombre:
         modelo = tmp_path / "modelo.par"
         r, _ = _correr("docs", "save-as", str(modelo), nombre)
+        _RUTAS[nombre] = str(modelo)
         assert r.exit_code == 0
         destino = tmp_path / "plano.dft"
         r, sobre = _correr(
             "draft", "from-part", str(modelo), "--out", str(destino), "--scale", "1:1", "--pdf"
         )
-        assert r.exit_code in (0, 4), sobre
-        if r.exit_code == 0:
-            assert destino.stat().st_size > 0 and sobre["data"]["marca_de_agua"] == "presente"
+        assert r.exit_code == 0, sobre
+        assert destino.stat().st_size > 0 and sobre["data"]["marca_de_agua"] == "presente"
