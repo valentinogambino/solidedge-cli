@@ -39,6 +39,27 @@ def test_lanzar_usa_la_factory_de_lanzamiento_solo_si_no_hay_instancia(sta):
     assert lanzador.llamadas == 1
 
 
+def test_lanzar_deja_visible_la_instancia_oculta(sta):
+    nueva = AplicacionFalsa()
+    nueva.visible = False  # una instancia lanzada por automatización arranca oculta
+    sesion = Sesion(sta=sta, proveedor=FabricaApp(), lanzador=FabricaApp(nueva))
+
+    assert sesion.conectar(lanzar=True)["lanzada"] is True
+
+    assert nueva.visible is True
+    assert nueva.registro == [("Visible=", True)]
+
+
+def test_conectar_sin_lanzar_no_cambia_la_visibilidad(sta):
+    oculta = AplicacionFalsa()
+    oculta.visible = False
+    sesion = Sesion(sta=sta, proveedor=FabricaApp(oculta), lanzador=FabricaApp())
+
+    assert sesion.conectar(lanzar=True)["lanzada"] is False
+
+    assert oculta.visible is False and oculta.registro == []
+
+
 def test_lanzar_no_lanza_si_ya_hay_instancia(sta, app_falsa):
     lanzador = FabricaApp(AplicacionFalsa())
     sesion = Sesion(sta=sta, proveedor=FabricaApp(app_falsa), lanzador=lanzador)

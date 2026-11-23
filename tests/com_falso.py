@@ -66,6 +66,7 @@ ESCRITURAS = frozenset(
         "DrawingViews.AddAssemblyView",
         "Close",
         "Quit",
+        "Visible=",
         "Dirty=",
         "Activate",
         "Variables.Add",
@@ -830,6 +831,12 @@ class AplicacionFalsa(_ConFallos):
     def Visible(self) -> bool:
         self._tocar("Visible")
         return self.visible
+
+    @Visible.setter
+    def Visible(self, valor: bool) -> None:
+        self.registro.append(("Visible=", valor))
+        self._tocar("Visible_set")
+        self.visible = valor
 
     @property
     def DisplayAlerts(self) -> bool:

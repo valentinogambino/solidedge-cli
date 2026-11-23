@@ -113,6 +113,10 @@ class Sesion:
             lanzada = True
         self._app = app
         app = self._app_verificada()
+        if lanzada:
+            # Verificado en vivo: una instancia lanzada por automatización arranca oculta
+            # (`Visible=False`) y sigue viva al terminar `se`; se la deja visible.
+            self._reintentar(lambda: setattr(app, "Visible", True))
         return {
             "version": str(self._reintentar(lambda: app.Version)),
             "nombre": str(self._reintentar(lambda: app.Name)),
