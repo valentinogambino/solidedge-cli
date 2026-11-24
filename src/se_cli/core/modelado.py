@@ -26,10 +26,10 @@ import math
 import re
 from typing import Any
 
-from se_cli.core import unidades
+from se_cli.core import croquis, unidades
 from se_cli.core.acceso import exigir_tipo, leer, opcional
 from se_cli.core.constants import valor as constante
-from se_cli.core.errors import ArgumentoInvalido, DocNoEncontrado, ErrorCom
+from se_cli.core.errors import ArgumentoInvalido, DocNoEncontrado, ErrorCom, SeError, traducir
 
 TIPOS_MODELABLES = ("part", "sheetmetal")
 
@@ -310,6 +310,131 @@ def crear_circulo(
     )
 
 
+# --- Perfil declarativo (`sketch profile`) ----------------------------------------------------
+
+# Índices de keypoint de `Relations2d.AddKeypoint`, verificados en vivo (2026-11-24): línea
+# 0=inicio, 1=fin, 2=medio; arco 0=centro, 1=inicio, 2=fin, 3=medio; círculo 0=centro. El arco
+# de `Arcs2d.AddByCenterStartEnd` siempre barre antihorario de inicio a fin: uno `cw` se crea
+# con inicio y fin intercambiados, y sus keypoints start/end se cruzan.
+_KEYPOINT = {
+    "line": {"start": 0, "end": 1},
+    "arc": {"start": 1, "end": 2, "center": 0},
+    "circle": {"center": 0},
+}
+_RELACION_DE = {
+    "horizontal": "AddHorizontal",
+    "vertical": "AddVertical",
+    "parallel": "AddParallel",
+    "perpendicular": "AddPerpendicular",
+    "equal": "AddEqual",
+    "concentric": "AddConcentric",
+    "tangent": "AddTangent",
+}
+
+
+def planificar_perfil(perfil: croquis.Perfil) -> dict[str, Any]:
+    return perfil.plan()
+
+
+def _keypoint(entidad: dict[str, Any], punto: str) -> int:
+    if entidad["tipo"] == "arc" and entidad["dir"] == "cw" and punto in ("start", "end"):
+        punto = "end" if punto == "start" else "start"
+    return _KEYPOINT[entidad["tipo"]][punto]
+
+
+def _agregar_entidad(perfil: Any, entidad: dict[str, Any]) -> Any:
+    tipo = entidad["tipo"]
+    if tipo == "line":
+        lineas = leer(lambda: perfil.Lines2d)
+        return leer(lambda: lineas.AddBy2Points(*entidad["desde"], *entidad["hasta"]))
+    if tipo == "circle":
+        circulos = leer(lambda: perfil.Circles2d)
+        return leer(lambda: circulos.AddByCenterRadius(*entidad["centro"], entidad["radio"]))
+    inicio, fin = entidad["inicio"], entidad["fin"]
+    if entidad["dir"] == "cw":
+        inicio, fin = fin, inicio
+    arcos = leer(lambda: perfil.Arcs2d)
+    return leer(lambda: arcos.AddByCenterStartEnd(*entidad["centro"], *inicio, *fin))
+
+
+def _agregar_restriccion(
+    relaciones: Any, restriccion: dict[str, Any], objetos: dict[str, Any], datos: dict[str, Any]
+) -> None:
+    if restriccion["tipo"] == "connect":
+        (id_a, punto_a), (id_b, punto_b) = restriccion["a"], restriccion["b"]
+        kp_a, kp_b = _keypoint(datos[id_a], punto_a), _keypoint(datos[id_b], punto_b)
+        leer(lambda: relaciones.AddKeypoint(objetos[id_a], kp_a, objetos[id_b], kp_b))
+        return
+    metodo = _RELACION_DE[restriccion["tipo"]]
+    argumentos = [objetos[i] for i in restriccion["entidades"]]
+    leer(lambda: getattr(relaciones, metodo)(*argumentos))
+
+
+def _borrar_conjunto(conjunto: Any) -> bool:
+    try:
+        leer(lambda: conjunto.Delete())
+    except Exception:  # noqa: BLE001 - es limpieza: el error original es el que importa
+        return False
+    return True
+
+
+def _con_etapa(error: Exception, etapa: str, borrado: bool, extra: dict[str, Any]) -> SeError:
+    traducido = traducir(error)
+    if traducido.codigo == "interno":
+        traducido = ErrorCom(f"{type(error).__name__}: {error}")
+    traducido.details = {
+        **(traducido.details or {}),
+        "etapa": etapa,
+        **extra,
+        "perfil_borrado": borrado,
+    }
+    return traducido
+
+
+def crear_perfil(doc: Any, perfil: croquis.Perfil) -> dict[str, Any]:
+    """Perfil cerrado de líneas, arcos y círculos con restricciones (ya validado, ver `croquis`).
+
+    Si algo falla una vez creado el `ProfileSet`, se borra y el error sale con la etapa en
+    `details` (`perfil`, `entidades`, `restricciones` o `cierre`).
+    """
+    exigir_modelable(doc, "sketch profile")
+    plano_indice = int(perfil.plano_indice)
+    plano = _plano(doc, plano_indice)
+    conjunto: Any = None
+    etapa: str = "perfil"
+    extra: dict[str, Any] = {}
+    try:
+        conjuntos = leer(lambda: doc.ProfileSets)
+        conjunto = leer(lambda: conjuntos.Add())
+        objeto = leer(lambda: conjunto.Profiles.Add(plano))
+        indice = int(leer(lambda: conjuntos.Count))
+        etapa = "entidades"
+        objetos: dict[str, Any] = {}
+        for entidad in perfil.entidades:
+            extra = {"entidad": entidad["id"]}
+            objetos[entidad["id"]] = _agregar_entidad(objeto, entidad)
+        datos = {e["id"]: e for e in perfil.entidades}
+        etapa = "restricciones"
+        relaciones = leer(lambda: objeto.Relations2d) if perfil.restricciones else None
+        for numero, restriccion in enumerate(perfil.restricciones, start=1):
+            extra = {"restriccion": numero, "tipo": restriccion["tipo"]}
+            _agregar_restriccion(relaciones, restriccion, objetos, datos)
+        etapa, extra = "cierre", {}
+        codigo = _cerrar_perfil(objeto)
+    except Exception as error:  # noqa: BLE001 - se traduce y se limpia
+        borrado = conjunto is not None and _borrar_conjunto(conjunto)
+        raise _con_etapa(error, etapa, borrado, extra) from error
+    resultado = _resultado_de_perfil(
+        indice, plano_indice, "perfil", croquis.caja_de(perfil), codigo
+    )
+    resultado["entidades"] = perfil.conteos()
+    resultado["restricciones"] = {
+        "aplicadas": len(perfil.restricciones),
+        "por_tipo": perfil.por_tipo_de_restriccion(),
+    }
+    return resultado
+
+
 def _resultado_de_perfil(
     indice: int, plano: int, tipo: str, dimensiones: dict[str, Any], codigo: int
 ) -> dict[str, Any]:
@@ -564,6 +689,7 @@ __all__ = [
     "PLANOS",
     "agujerear",
     "crear_circulo",
+    "crear_perfil",
     "crear_rect",
     "exigir_modelable",
     "extruir",
@@ -573,6 +699,7 @@ __all__ = [
     "planificar_agujero",
     "planificar_circulo",
     "planificar_extrusion",
+    "planificar_perfil",
     "planificar_rect",
     "planificar_revolucion",
     "resolver_perfil",

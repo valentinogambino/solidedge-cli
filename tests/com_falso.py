@@ -1162,6 +1162,16 @@ ESCRITURAS = ESCRITURAS | {
     "Profiles.Add",
     "Lines2d.AddBy2Points",
     "Circles2d.AddByCenterRadius",
+    "Arcs2d.AddByCenterStartEnd",
+    "Relations2d.AddKeypoint",
+    "Relations2d.AddHorizontal",
+    "Relations2d.AddVertical",
+    "Relations2d.AddParallel",
+    "Relations2d.AddPerpendicular",
+    "Relations2d.AddEqual",
+    "Relations2d.AddConcentric",
+    "Relations2d.AddTangent",
+    "ProfileSet.Delete",
     "Profile.End",
     "Profile.ToggleConstruction",
     "Profile.SetAxisOfRevolution",
@@ -1185,6 +1195,7 @@ class LineaFalsa:
     def __init__(self, puntos: tuple) -> None:
         self.puntos = puntos
         self.construccion = False
+        self.descripcion = ("line", *puntos)
 
 
 class LineasFalsas:
@@ -1213,11 +1224,78 @@ class CirculosFalsos:
         self.doc.registro.append(("Circles2d.AddByCenterRadius", x, y, r))
         self.doc._tocar("AddByCenterRadius")
         self.circulos.append((x, y, r))
-        return object()
+        return ElementoFalso(("circle", x, y, r))
 
     @property
     def Count(self) -> int:
         return len(self.circulos)
+
+
+class ElementoFalso:
+    """Círculo o arco de un perfil: solo guarda cómo se creó (`descripcion`)."""
+
+    def __init__(self, descripcion: tuple) -> None:
+        self.descripcion = descripcion
+
+
+class ArcosFalsos:
+    """`Arcs2d`: `AddByCenterStartEnd` (siempre antihorario de inicio a fin, en vivo)."""
+
+    def __init__(self, doc: DocumentoFalso) -> None:
+        self.doc = doc
+        self.arcos: list[ElementoFalso] = []
+
+    def AddByCenterStartEnd(self, cx, cy, sx, sy, ex, ey):
+        self.doc.registro.append(("Arcs2d.AddByCenterStartEnd", cx, cy, sx, sy, ex, ey))
+        self.doc._tocar("AddByCenterStartEnd")
+        arco = ElementoFalso(("arc", cx, cy, sx, sy, ex, ey))
+        self.arcos.append(arco)
+        return arco
+
+    @property
+    def Count(self) -> int:
+        return len(self.arcos)
+
+
+class RelacionesDePerfilFalsas:
+    """`Relations2d`: anota cada relación con la descripción de sus elementos."""
+
+    def __init__(self, doc: DocumentoFalso) -> None:
+        self.doc = doc
+        self.relaciones: list[tuple] = []
+
+    def _anotar(self, nombre: str, *datos: Any) -> None:
+        self.doc.registro.append((f"Relations2d.{nombre}", *datos))
+        self.doc._tocar(f"Relations2d.{nombre}")
+        self.relaciones.append((nombre, *datos))
+
+    def AddKeypoint(self, a, kp_a, b, kp_b):
+        self._anotar("AddKeypoint", a.descripcion, kp_a, b.descripcion, kp_b)
+
+    def AddHorizontal(self, a):
+        self._anotar("AddHorizontal", a.descripcion)
+
+    def AddVertical(self, a):
+        self._anotar("AddVertical", a.descripcion)
+
+    def AddParallel(self, a, b):
+        self._anotar("AddParallel", a.descripcion, b.descripcion)
+
+    def AddPerpendicular(self, a, b):
+        self._anotar("AddPerpendicular", a.descripcion, b.descripcion)
+
+    def AddEqual(self, a, b):
+        self._anotar("AddEqual", a.descripcion, b.descripcion)
+
+    def AddConcentric(self, a, b):
+        self._anotar("AddConcentric", a.descripcion, b.descripcion)
+
+    def AddTangent(self, a, b):
+        self._anotar("AddTangent", a.descripcion, b.descripcion)
+
+    @property
+    def Count(self) -> int:
+        return len(self.relaciones)
 
 
 class EjeDeRefFalso:
@@ -1234,6 +1312,8 @@ class PerfilFalso:
         self.plano = plano
         self.Lines2d = LineasFalsas(doc)
         self.Circles2d = CirculosFalsos(doc)
+        self.Arcs2d = ArcosFalsos(doc)
+        self.Relations2d = RelacionesDePerfilFalsas(doc)
         self.Name = "Profile_1"
 
     def End(self, bandera: int) -> int:
@@ -1241,7 +1321,7 @@ class PerfilFalso:
         self.doc._tocar("End")
         if self.doc.codigo_end is not None:
             return self.doc.codigo_end
-        return -103 if self.Lines2d.Count else 0
+        return -103 if self.Lines2d.Count or self.Arcs2d.Count else 0
 
     def ToggleConstruction(self, linea: LineaFalsa) -> None:
         self.doc.registro.append(("Profile.ToggleConstruction",))
@@ -1294,6 +1374,11 @@ class ConjuntoDePerfilesFalso:
         self.Name = f"ProfileSet_{numero}"
         self.perfiles: list[PerfilFalso] = []
         self.Profiles = PerfilesFalsos(self)
+
+    def Delete(self) -> None:
+        self.doc.registro.append(("ProfileSet.Delete", self.Name))
+        self.doc._tocar("ProfileSet.Delete")
+        self.doc.ProfileSets.elementos.remove(self)
 
 
 class ConjuntosDePerfilesFalsos(ColeccionFalsa):
