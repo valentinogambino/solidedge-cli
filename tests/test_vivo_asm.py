@@ -125,3 +125,41 @@ def test_armar_un_ensamble_con_dos_ocurrencias(tmp_path):
         nodo = _arbol(conjunto)[0]
         assert nodo["cantidad"] == 1 and nodo["nombre"] == primera["nombre"]
         assert pieza.exists()
+
+
+@pytest.mark.live
+def test_subensamble_como_ocurrencia_de_otro_ensamble(tmp_path):
+    """Un `.asm` con dos cajas, insertado dos veces en otro `.asm`: árbol, lista y volumen."""
+    with _documentos_propios(tmp_path) as (pieza, conjunto):
+        arriba = tmp_path / "arriba_asm_live.asm"
+        creados = []
+        try:
+            d = ["--doc", conjunto]
+            for at in ("0,0,0", "100mm,0,0"):
+                assert _correr("asm", "add", str(pieza), "--at", at, *d)[0].exit_code == 0
+            assert _correr("docs", "save", conjunto)[0].exit_code == 0
+            nombre = _nuevo_guardado("assembly", arriba)
+            creados.append(nombre)
+            u = ["--doc", arriba.name]
+            for at in ("0,0,0", "0,200mm,0"):
+                r, sobre = _correr("asm", "add", str(tmp_path / conjunto), "--at", at, *u)
+                assert r.exit_code == 0, sobre
+                assert sobre["data"]["ensamble"] is True
+
+            nodo = _arbol(arriba.name)[0]
+            assert nodo["ensamble"] is True and nodo["cantidad"] == 2
+            hijo = nodo["hijos"][0]
+            # Desde el segundo nivel Solid Edge da SubOccurrence: el archivo no puede quedar vacío.
+            assert hijo["archivo"].lower() == str(pieza).lower() and hijo["cantidad"] == 2
+            r, sobre = _correr("asm", "tree", "--flat", *u)
+            por_archivo = {m["archivo"].lower(): m["cantidad"] for m in sobre["data"]["materiales"]}
+            assert por_archivo == {str(tmp_path / conjunto).lower(): 2, str(pieza).lower(): 4}
+
+            r, sobre = _correr("mass", *u)
+            assert r.exit_code == 0, sobre
+            assert sobre["data"]["volumen"] == pytest.approx(4 * 50e-3 * 30e-3 * 20e-3, rel=1e-6)
+        finally:
+            r, sobre = _correr("docs", "list")
+            for doc in sobre["data"]["documentos"]:
+                if doc["nombre"] in (*creados, arriba.name):
+                    _correr("docs", "close", doc["nombre"], "--discard")

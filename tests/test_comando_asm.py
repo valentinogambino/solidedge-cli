@@ -159,6 +159,41 @@ def test_tree_hijos_por_el_documento_de_la_ocurrencia(cli, app_falsa):
     assert sobre["data"]["arbol"][0]["hijos"][0]["nombre"] == "tornillo.par:1"
 
 
+def test_tree_hijos_son_sub_occurrence_con_sub_occurrence_file_name(cli, app_falsa):
+    """Desde el segundo nivel Solid Edge da `SubOccurrence`, sin `OccurrenceFileName`."""
+
+    class SubOcurrenciaFalsa:
+        Visible = True
+        Subassembly = False
+        SubOccurrences = ColeccionFalsa([])
+
+        def __init__(self, nombre, archivo):
+            self.Name = nombre
+            self.SubOccurrenceFileName = archivo
+
+    sub = OcurrenciaFalsa(
+        "Sub.asm:1",
+        "C:\p\Sub.asm",
+        hijos=[
+            SubOcurrenciaFalsa("a.par:1", "C:\p\a.par"),
+            SubOcurrenciaFalsa("b.par:1", "C:\p\b.par"),
+        ],
+    )
+    _ensamble(app_falsa, [sub])
+
+    _, sobre = cli("asm", "tree")
+    assert [h["archivo"] for h in sobre["data"]["arbol"][0]["hijos"]] == [
+        "C:\p\a.par",
+        "C:\p\b.par",
+    ]
+    _, sobre = cli("asm", "tree", "--flat")
+    assert {m["archivo"] for m in sobre["data"]["materiales"]} == {
+        "C:\p\Sub.asm",
+        "C:\p\a.par",
+        "C:\p\b.par",
+    }
+
+
 @pytest.mark.parametrize("tipo", [1, 2, 4])
 def test_documento_que_no_es_ensamble_da_exit_2(cli, app_falsa, tipo):
     app_falsa.agregar_documento("Otro", ruta="C:\\p\\Otro", tipo=tipo)

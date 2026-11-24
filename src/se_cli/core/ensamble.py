@@ -49,6 +49,16 @@ def _coleccion_de_hijos(ocurrencia: Any) -> Any:
     return opcional(lambda: ocurrencia.OccurrenceDocument.Occurrences)
 
 
+def _archivo_de(ocurrencia: Any) -> str:
+    """Archivo de una ocurrencia. Las de segundo nivel en adelante son `SubOccurrence`, que no
+    tiene `OccurrenceFileName` sino `SubOccurrenceFileName` (verificado en vivo, 2026-11-24)."""
+    for atributo in ("OccurrenceFileName", "SubOccurrenceFileName"):
+        archivo = opcional(lambda a=atributo: getattr(ocurrencia, a))
+        if archivo:
+            return str(archivo)
+    return ""
+
+
 def _booleano(valor: Any) -> bool | None:
     return None if valor is None else bool(valor)
 
@@ -59,7 +69,7 @@ def _nivel(
     """Nodos de un nivel. Las ocurrencias hermanas del mismo archivo se agrupan en `cantidad`."""
     grupos: dict[tuple[str, bool | None, bool], dict[str, Any]] = {}
     for posicion, ocurrencia in enumerate(items(coleccion), start=1):
-        archivo = str(opcional(lambda o=ocurrencia: o.OccurrenceFileName) or "")
+        archivo = _archivo_de(ocurrencia)
         visible = _booleano(opcional(lambda o=ocurrencia: o.Visible))
         es_sub = bool(opcional(lambda o=ocurrencia: o.Subassembly))
         clave = (os.path.normcase(archivo), visible, es_sub)

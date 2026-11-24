@@ -572,6 +572,12 @@ Sin `--angle` es un chaflán de distancias iguales (`Chamfers.AddEqualSetback`) 
 las caras que comparten **todas** las aristas elegidas; si no hay ninguna (por ejemplo `all` en una
 caja) es exit 2 sin tocar el modelo. Distancia menor o igual que 0: exit 2.
 
+**Qué cara toma de referencia** (verificado en vivo, 2026-11-24): la distancia corre **sobre la cara de
+referencia** y el otro cateto, sobre la cara vecina, mide distancia x tan(ángulo). En una caja de
+50 x 30 x 20 mm, `chamfer 4mm --angle 30deg --edges 7` (arista entre las caras 2, el frente y=0, y 5,
+la tapa): la referencia es la cara 2; el material quitado (230.94 mm3) tiene su centroide en y = 0.770 mm
+y z = 18.667 mm, o sea catetos de 4 mm sobre la cara 2 (hacia abajo) y 2.309 mm sobre la tapa.
+
 ### Si Solid Edge no puede hacer la operación
 
 Un radio o una distancia demasiado grandes no dan error en la API: Solid Edge crea la operación con
