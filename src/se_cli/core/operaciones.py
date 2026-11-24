@@ -101,6 +101,14 @@ def _buscar(features: list[Any], selector: str) -> tuple[int, Any]:
     )
 
 
+def indice_de_operacion(doc: Any, nombre: str) -> int | None:
+    """Índice (1-based, como `features list`) de la operación con ese nombre exacto, o None."""
+    for indice, feature in enumerate(_todas(doc), start=1):
+        if str(opcional(lambda feature=feature: feature.Name) or "") == nombre:
+            return indice
+    return None
+
+
 def cambiar_supresion(doc: Any, selector: str, suprimir: bool) -> dict[str, Any]:
     """Suprimí o reactivá una operación. Devuelve su descripción y `changed`.
 
@@ -124,4 +132,11 @@ def cambiar_supresion(doc: Any, selector: str, suprimir: bool) -> dict[str, Any]
     return {**despues, "changed": True}
 
 
-__all__ = ["TIPOS_SOPORTADOS", "cambiar_supresion", "listar", "nombre_de_estado", "nombre_de_tipo"]
+__all__ = [
+    "TIPOS_SOPORTADOS",
+    "cambiar_supresion",
+    "indice_de_operacion",
+    "listar",
+    "nombre_de_estado",
+    "nombre_de_tipo",
+]

@@ -384,6 +384,75 @@ rectángulo de 20 x 40 mm en `front` desde x = 10 mm, `revolve --axis y` = tubo 
 volumen esperado pi (30^2 - 10^2) 40 = 100530.965 mm3 y 789.168 g; obtenidos los mismos.
 Una segunda revolución de 180deg sumó 4712.389 mm3 (esperado pi (20^2 - 10^2) 10 / 2).
 
+## Aristas, redondeos y chaflanes
+
+Para redondear o achaflanar hay que elegir aristas por número. `se edges list` las numera y
+`se round` / `se chamfer` las usan. Los tres aceptan `--doc` y `--units`, y funcionan en `part` y
+`sheetmetal` en modo ordenado con un modelo base (`se extrude` primero); en otro tipo de documento,
+o sin modelo, dan exit 2. `round` y `chamfer` modifican: `--readonly` los bloquea (exit 6),
+`--dry-run` informa el plan sin tocar COM y escriben con `DisplayAlerts` apagado.
+
+**Los índices de arista cambian después de cada operación que modifica el cuerpo** (un redondeo o un
+chaflán agrega aristas y las renumera): hay que volver a correr `se edges list` antes de la
+siguiente. Dentro de una misma lectura el índice (1-based) es estable.
+
+### `se edges list`
+
+```powershell
+se --json edges list [--units mm] [--doc Pieza.par]
+# {"ok": true, "data": {"cantidad": 12, "cantidad_caras": 6, "aristas": [{"indice": 1, "tipo": "linea", "longitud": 20.0, "inicio": [0.0, 0.0, 0.0], "fin": [0.0, 0.0, 20.0], "caras": [{"indice": 1, "tipo": "plano"}, {"indice": 3, "tipo": "plano"}]}, ...], "unidades": {"longitud": "mm"}}, "error": null}
+```
+`tipo` es `linea`, `arco`, `circulo` u `otra` (elipse, spline...). `longitud`, `inicio` y `fin` van en
+las unidades de `--units` (por defecto metros). `caras` son los índices (1-based) de las caras del
+cuerpo que toca la arista, con su tipo (`plano`, `cilindro`, `cono`, `esfera`, `toro`, `bspline`,
+`otra`); sirven para saber qué aristas comparten una cara. Lo que la API no entrega queda en `null`.
+
+### `se round`
+
+```powershell
+se --json round <radio> --edges all|1,3,5|1-4 [--units mm] [--doc Pieza.par]
+# {"ok": true, "data": {"operacion": "redondeo", "nombre": "Round_1", "indice": 2, "cantidad_aristas": 4, "aristas": [2, 4, 6, 9], "estado": "ok", "volumen_si": 2.9931e-05, "volumen_quitado_si": 6.867e-08, "radio": 2.0, "unidades": {"longitud": "mm"}}, "error": null}
+```
+Redondeo de radio constante: una sola operación (`Model.Rounds.Add`) con todas las aristas
+pedidas. `--edges` es obligatorio (sin él, exit 2) y acepta `all`, una lista (`1,3,5`), rangos
+(`1-4`) o mezclas (`1-3,7`). `radio` es el que leyó Solid Edge de la operación (`GetConstantRadii`),
+en las unidades de `--units`; `indice` es el de `se features list`. Radio menor o igual que 0, o con
+una unidad que no es de longitud: exit 2. Índice de arista fuera de rango: exit 5.
+
+### `se chamfer`
+
+```powershell
+se --json chamfer <distancia> --edges all|1,3,5|1-4 [--angle 30deg] [--units mm,deg] [--doc Pieza.par]
+# {"ok": true, "data": {"operacion": "chaflan", "nombre": "Chamfer_2", "indice": 4, "cantidad_aristas": 4, "aristas": [4, 8, 12, 16], "estado": "ok", "volumen_si": 2.9809e-05, "volumen_quitado_si": 4.45e-08, "distancia": 1.0, "angulo": 30.0, "unidades": {"longitud": "mm", "angulo": "deg"}}, "error": null}
+```
+Sin `--angle` es un chaflán de distancias iguales (`Chamfers.AddEqualSetback`) y `angulo` sale
+`null`. Con `--angle` (entre 0 y 90 grados; sin unidad, radianes) es distancia + ángulo
+(`Chamfers.AddSetbackAngle`), que necesita una cara de referencia: se usa la de menor índice entre
+las caras que comparten **todas** las aristas elegidas; si no hay ninguna (por ejemplo `all` en una
+caja) es exit 2 sin tocar el modelo. Distancia menor o igual que 0: exit 2.
+
+### Si Solid Edge no puede hacer la operación
+
+Un radio o una distancia demasiado grandes no dan error en la API: Solid Edge crea la operación con
+estado `failed`, y mientras exista las operaciones siguientes también fallan. `round` y `chamfer`
+leen el estado después de crearla; si falló la borran (`Feature.Delete`) y devuelven exit 4
+(`com_error`) con el modelo como estaba. `error.details` dice `operacion_fallida`, `borrada`
+(`false` si el borrado también falló: ahí hay que borrarla a mano), `aristas` y `estado`.
+
+```powershell
+se --json round 500mm --edges all
+# {"ok": false, "data": null, "error": {"code": "com_error", "message": "Solid Edge no pudo crear el redondeo con esas aristas (...): la operación quedó fallida y se borró, así que el modelo quedó como estaba.", "details": {"operacion_fallida": "Round_4", "borrada": true, "aristas": [1, 2, 3, ...], "estado": "failed"}}}
+```
+
+### Recorrido en vivo (2026-11-23, Solid Edge 226.00.01.04)
+
+Caja de 50 x 30 x 20 mm: `edges list` da 12 aristas rectas (4 de 20, 4 de 30 y 4 de 50 mm) y 6
+caras planas. `round 2mm` en las 4 verticales quitó 68.673 mm3 (esperado
+4 (1 - pi/4) 2^2 20 = 68.673); después hay 24 aristas, con arcos. `chamfer 1mm` en las 4 rectas de la
+base y `chamfer 1mm --angle 30deg` en las 4 rectas de la tapa (releyendo los índices) bajaron cada
+vez el volumen de `se mass`. Un redondeo de 500 mm y un chaflán de 500 mm dieron exit 4 y dejaron
+`features list` y el volumen sin cambios. Prueba: `tests/test_vivo_redondeos.py`.
+
 ## Escape a COM y scripts
 
 ### `se com get|set|invoke`
@@ -611,6 +680,11 @@ Validados el 2026-11-23 contra Solid Edge 2026 Community Edition 226.00.01.04.
 | Cortes y agujeros | `ExtrudedCutouts.AddFiniteMulti`, `AddThroughAllMulti` | verificado; un corte que no toca material **no da error** (se detecta con `Body.Volume`); `AddThroughAllMulti` con `igSymmetric` no corta; se deshace con `Feature.Delete` |
 | Revolución | `Models.AddFiniteRevolvedProtrusion`, `RevolvedProtrusions.AddFiniteMulti`, `Profile.SetAxisOfRevolution` | verificado (volumen de un tubo exacto); el eje se puede agregar con el perfil ya cerrado |
 | Volumen | `Models.Item(1).Body.Volume` | verificado; el `Body` hay que pedirlo de nuevo después de cada operación |
+| Aristas del cuerpo | `Body.Edges(igQueryAll)` | verificado: da las 12 aristas de una caja sin repetir las compartidas; **corregido**: el MCP dice que `Body.Edges` no anda en late binding y recorre `Face.Edges` (cada arista sale dos veces) |
+| Datos de una arista | `Geometry.Type`, `IsClosed`, `GetEndPoints(v1, v2)`, `GetParamExtents()` + `GetLengthAtParam(min, max)`, `GetFaces()` | verificado; **corregido**: `Edge.Length`, `Edge.Faces` y `Edge.Name` no existen; `GetFaces()` devuelve `(n, (caras...))` y esas caras se comparan con `==` contra `Body.Faces(igQueryAll)` para saber su índice; un círculo completo tiene `IsClosed` y un arco no |
+| Redondeo | `Model.Rounds.Add(n, [aristas], [radios])` | verificado con una lista de Python de aristas (una operación para todas); `GetConstantRadii()` devuelve `(n, radios)`; el redondeo agrega aristas (12 pasan a 24 con 4 redondeadas) y renumera |
+| Chaflán | `Model.Chamfers.AddEqualSetback(n, [aristas], distancia)`, `AddSetbackAngle(cara, n, [aristas], distancia, angulo)` | verificado, también con varias aristas en una llamada; leídos con `ChamferSetbackValue1` y `ChamferSetbackAngle`; con distancia 4 mm y 30 grados sobre una arista de 50 mm quitó 230.94 mm3 (catetos de 4 y 4 tan 30 mm), con cualquiera de las dos caras de la arista como referencia; con una arista vieja (de antes de una operación) la llamada levanta una excepción |
+| Operación imposible | `Status == igFeatureFailed` tras `Rounds.Add` / `Chamfers.Add*` | verificado: radio de 500 mm sobre una caja **no da error**: crea `Round_n` fallida, deja el volumen igual y hace fallar las operaciones nuevas hasta borrarla; `Feature.Delete()` la quita y el modelo vuelve a funcionar |
 | Desarrollo de chapa | `FlatPatternModels.Add(modelo)`, `FlatPatterns.Add(arista, cara, vértice)`, `Face.Geometry.Type == igPlane` | verificado en chapa con un doblez; en la sesión sincrónica probada el DXF salió con entidades aun sin reabrir, pero se reabre igual |
 | Brida de chapa (solo para armar la prueba) | `ModelingMode = seModelingModeSynchronous` antes del tab + `Flanges.AddSync` | verificado; en modo ordenado `Flanges.Add*` no resuelve |
 | `se com` | `getattr` / `setattr` sobre late binding | verificado con `Documents.Item(...)`, `Models.Item(1)...`, `DisplayAlerts` |

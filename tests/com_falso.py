@@ -1054,6 +1054,9 @@ ESCRITURAS = ESCRITURAS | {
     "ExtrudedCutouts.AddThroughAllMulti",
     "RevolvedProtrusions.AddFiniteMulti",
     "Feature.Delete",
+    "Rounds.Add",
+    "Chamfers.AddEqualSetback",
+    "Chamfers.AddSetbackAngle",
 }
 
 LADO_IZQUIERDO = 1  # igLeft: un corte hacia atras desde un plano de la base no toca material
@@ -1193,10 +1196,15 @@ class OperacionFalsa:
         self.Name = nombre
         self.delta = delta
         self.coleccion = coleccion
+        self.Status = 1216476310  # igFeatureOK
+        self.no_borrable = False
 
     def Delete(self) -> None:
+        if self.no_borrable:
+            raise com_error(0x80004005, "Error no especificado")
         self.coleccion.doc.registro.append(("Feature.Delete", self.Name))
         self.coleccion.elementos.remove(self)
+        self.coleccion.modelo.Features.elementos.remove(self)
 
 
 class OperacionesFalsas(ColeccionFalsa):
@@ -1211,6 +1219,7 @@ class OperacionesFalsas(ColeccionFalsa):
         self.contador += 1
         operacion = OperacionFalsa(f"{self.prefijo}_{self.contador}", self.signo * delta, self)
         self.elementos.append(operacion)
+        self.modelo.Features.elementos.append(operacion)
         return operacion
 
     def _anotar(self, que: str, *datos: Any) -> None:
@@ -1238,27 +1247,162 @@ class OperacionesFalsas(ColeccionFalsa):
         return self.agregar(0.0 if sin_efecto else perfiles[0].area() * self.modelo.espesor)
 
 
+# Tipos de geometría (GNTTypePropertyConstants) que usan las caras y aristas del cuerpo falso.
+GEOMETRIA_PLANO = -1909484335  # igPlane
+GEOMETRIA_CILINDRO = -114972029  # igCylinder
+GEOMETRIA_LINEA = 167551109  # igLine
+GEOMETRIA_CIRCULO = 167551105  # igCircle
+GEOMETRIA_ELIPSE = 167551107  # igEllipse
+
+
+class GeometriaDeCuerpoFalsa:
+    def __init__(self, tipo: int) -> None:
+        self.Type = tipo
+
+
+class CaraDeCuerpoFalsa:
+    def __init__(self, indice: int, tipo: int = GEOMETRIA_PLANO) -> None:
+        self.indice = indice
+        self.Geometry = GeometriaDeCuerpoFalsa(tipo)
+
+
+class AristaDeCuerpoFalsa:
+    """Arista de `Body.Edges`: sin `Length`, `Faces` ni `Name`, como en Solid Edge."""
+
+    def __init__(
+        self, indice, inicio, fin, caras, tipo=GEOMETRIA_LINEA, cerrada=False, largo=None
+    ) -> None:
+        self.indice = indice
+        self.inicio, self.fin, self.caras = inicio, fin, caras
+        self.Geometry = GeometriaDeCuerpoFalsa(tipo)
+        self.IsClosed = cerrada
+        self.largo = math.dist(inicio, fin) if largo is None else largo
+
+    def GetParamExtents(self):
+        return 0.0, self.largo
+
+    def GetLengthAtParam(self, minimo, maximo):
+        return maximo - minimo
+
+    def GetEndPoints(self, inicio, fin):
+        return self.inicio, self.fin
+
+    def GetFaces(self):
+        return len(self.caras), tuple(self.caras)
+
+
+def aristas_de_caja(ancho: float, largo: float, alto: float):
+    """Caras y aristas de una caja: caras 1/2 en x=0/x=ancho, 3/4 en y, 5/6 en z."""
+    caras = [CaraDeCuerpoFalsa(n) for n in range(1, 7)]
+    dims = (ancho, largo, alto)
+    aristas: list[AristaDeCuerpoFalsa] = []
+    for eje_a, eje_b in ((0, 1), (0, 2), (1, 2)):
+        eje_libre = ({0, 1, 2} - {eje_a, eje_b}).pop()
+        for lado_a in (0, 1):
+            for lado_b in (0, 1):
+                inicio, fin = [0.0] * 3, [0.0] * 3
+                inicio[eje_a] = fin[eje_a] = lado_a * dims[eje_a]
+                inicio[eje_b] = fin[eje_b] = lado_b * dims[eje_b]
+                fin[eje_libre] = dims[eje_libre]
+                par = [caras[2 * eje_a + lado_a], caras[2 * eje_b + lado_b]]
+                aristas.append(
+                    AristaDeCuerpoFalsa(len(aristas) + 1, tuple(inicio), tuple(fin), par)
+                )
+    return caras, aristas
+
+
 class CuerpoDeParteFalso:
     def __init__(self, modelo: ModeloParteFalso) -> None:
         self.modelo = modelo
+        self.caras, self.aristas = aristas_de_caja(0.05, 0.03, modelo.espesor)
 
     @property
     def Volume(self) -> float:
         return self.modelo.volumen()
 
+    def Edges(self, consulta: int) -> ColeccionFalsa:
+        self.modelo.doc._tocar("Body.Edges")
+        return ColeccionFalsa(self.aristas)
+
+    def Faces(self, consulta: int) -> ColeccionFalsa:
+        self.modelo.doc._tocar("Body.Faces")
+        return ColeccionFalsa(self.caras)
+
+
+class OperacionDeAristasFalsa(OperacionFalsa):
+    """`Round` o `Chamfer`: guarda lo pedido y lo devuelve como Solid Edge."""
+
+    def __init__(self, nombre, delta, coleccion, **valores) -> None:
+        super().__init__(nombre, delta, coleccion)
+        self.valores = valores
+
+    def _valor(self, clave):
+        if self.coleccion.doc.sin_valores:
+            raise com_error(0x80004005, "Error no especificado")
+        return self.valores[clave]
+
+    def GetConstantRadii(self):
+        radios = self._valor("radios")
+        return len(radios), tuple(radios)
+
+    @property
+    def ChamferSetbackValue1(self):
+        return self._valor("distancia")
+
+    @property
+    def ChamferSetbackAngle(self):
+        return self._valor("angulo")
+
+
+class RedondeosFalsos(OperacionesFalsas):
+    """`Model.Rounds` o `Model.Chamfers`.
+
+    Imita lo verificado en vivo: con `doc.geometria_imposible` Solid Edge no levanta un error:
+    deja una operación con `Status == igFeatureFailed` que hay que borrar.
+    """
+
+    def _crear_de_aristas(self, delta: float, **valores) -> OperacionDeAristasFalsa:
+        self.contador += 1
+        fallida = self.doc.geometria_imposible
+        operacion = OperacionDeAristasFalsa(
+            f"{self.prefijo}_{self.contador}", 0.0 if fallida else delta, self, **valores
+        )
+        if fallida:
+            operacion.Status = 1216476311  # igFeatureFailed
+        operacion.no_borrable = self.doc.operacion_no_borrable
+        self.elementos.append(operacion)
+        self.modelo.Features.elementos.append(operacion)
+        return operacion
+
+    def Add(self, cantidad, aristas, radios):
+        self._anotar("Rounds.Add", cantidad, tuple(a.indice for a in aristas), tuple(radios))
+        return self._crear_de_aristas(-1e-9 * cantidad, radios=tuple(radios))
+
+    def AddEqualSetback(self, cantidad, aristas, distancia):
+        indices = tuple(a.indice for a in aristas)
+        self._anotar("Chamfers.AddEqualSetback", cantidad, indices, distancia)
+        return self._crear_de_aristas(-1e-9 * cantidad, distancia=distancia, angulo=math.pi / 4)
+
+    def AddSetbackAngle(self, cara, cantidad, aristas, distancia, angulo):
+        indices = tuple(a.indice for a in aristas)
+        self._anotar("Chamfers.AddSetbackAngle", cara.indice, cantidad, indices, distancia, angulo)
+        return self._crear_de_aristas(-1e-9 * cantidad, distancia=distancia, angulo=angulo)
+
 
 class ModeloParteFalso:
-    def __init__(self, doc: DocumentoFalso) -> None:
+    def __init__(self, doc: DocumentoFalso, espesor: float = 0.0) -> None:
         self.doc = doc
-        self.espesor = 0.0
+        self.espesor = espesor
         self.ExtrudedProtrusions = OperacionesFalsas(doc, "ExtrudedProtrusion", 1, self)
         self.ExtrudedCutouts = OperacionesFalsas(doc, "ExtrudedCutout", -1, self)
         self.RevolvedProtrusions = OperacionesFalsas(doc, "RevolvedProtrusion", 1, self)
+        self.Rounds = RedondeosFalsos(doc, "Round", 1, self)
+        self.Chamfers = RedondeosFalsos(doc, "Chamfer", 1, self)
+        self.Features = ColeccionFalsa([])
         self.Body = CuerpoDeParteFalso(self)
 
     def volumen(self) -> float:
-        colecciones = (self.ExtrudedProtrusions, self.ExtrudedCutouts, self.RevolvedProtrusions)
-        return sum(op.delta for col in colecciones for op in col.elementos)
+        return sum(op.delta for op in self.Features.elementos)
 
 
 class ModelosDeParteFalsos(ColeccionFalsa):
@@ -1271,8 +1415,7 @@ class ModelosDeParteFalsos(ColeccionFalsa):
     def AddFiniteExtrudedProtrusion(self, cantidad, perfiles, lado, distancia):
         self.doc.registro.append(("Models.AddFiniteExtrudedProtrusion", cantidad, lado, distancia))
         self.doc._tocar("AddFiniteExtrudedProtrusion")
-        modelo = ModeloParteFalso(self.doc)
-        modelo.espesor = distancia
+        modelo = ModeloParteFalso(self.doc, espesor=distancia)
         modelo.ExtrudedProtrusions.agregar(perfiles[0].area() * distancia)
         self.elementos.append(modelo)
         return modelo
@@ -1299,6 +1442,9 @@ def con_modelado(doc: DocumentoFalso, *, modo: int | None = 2) -> DocumentoFalso
     doc.Models = ModelosDeParteFalsos(doc)
     doc.codigo_end = None
     doc.lado_sin_efecto = LADO_IZQUIERDO
+    doc.geometria_imposible = False  # Rounds/Chamfers dejan una operación fallida
+    doc.operacion_no_borrable = False
+    doc.sin_valores = False  # GetConstantRadii y ChamferSetback* fallan
     if modo is not None:
         doc.ModelingMode = modo
     return doc
