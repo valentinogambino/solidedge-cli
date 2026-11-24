@@ -14,6 +14,7 @@ from se_cli.commands import (
     modelado,
     operaciones,
     propiedades,
+    redondeos,
     sesion,
     variables,
 )
@@ -31,6 +32,7 @@ app.add_typer(draft.app, name="draft")
 app.add_typer(chapa.app, name="sheetmetal")
 masa.registrar(app)
 modelado.registrar(app)
+redondeos.registrar(app)
 com.registrar(app)
 exportar.registrar(app)
 
