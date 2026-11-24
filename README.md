@@ -245,6 +245,19 @@ pieza y chapa: otro tipo da exit 2. Solid Edge marca el documento como modificad
 se lee `Features.Count`, y `Dirty` no se puede limpiar: después de `features list` un `docs close`
 sin flags se niega y pide `--save` o `--discard`.
 
+```powershell
+se --json features suppress 2        # por índice (el de `features list`) o por nombre
+# {"ok": true, "data": {"indice": 2, "nombre": "ExtrudedCutout_1", "tipo": "ExtrudedCutout", "suprimida": true, "estado": "suppressed", "changed": true}, "error": null}
+se --json features unsuppress ExtrudedCutout_1 --doc Pieza.par
+```
+Suprimen o reactivan una operación del documento (`Feature.Suppress`). Aceptan `--doc` y modifican:
+`--readonly` los bloquea (exit 6) y `--dry-run` informa qué harían. El selector numérico es siempre
+un índice; un nombre se compara sin distinguir mayúsculas. Un índice fuera de rango o un nombre que
+no existe da exit 5; un documento que no es pieza ni chapa, exit 2. Son idempotentes: si la operación
+ya está en el estado pedido no se escribe nada y `changed` es `false`. `suprimida` y `estado` son lo
+que Solid Edge informa después de escribir (si no coincide con lo pedido, exit 4). La supresión
+cambia el modelo: `se mass` ya no cuenta una operación suprimida.
+
 ## Modelado básico (F5)
 
 Todos aceptan `--doc <selector>` (por defecto el activo), valores con unidad (`10mm`, `45deg`; sin
@@ -538,6 +551,7 @@ Validados el 2026-11-23 contra Solid Edge 2026 Community Edition 226.00.01.04.
 | `ComputePhysicalPropertiesWithSpecifiedDensity` | pieza y chapa, kwargs con buffers | verificado (cubo 50 mm, 7850 kg/m3: 0.98125 kg) |
 | masa de un ensamble | `doc.ComputePhysicalPropertiesWithSpecifiedDensity` | **corregido**: no existe; se usa `PhysicalProperties.Update()` + `GetAssemblyPhysicalProperties()` (sin densidad ni área) |
 | `Occurrence`, `GetRangeBox`, `Features` | `asm tree`, `features list` | verificado; leer `Features.Count` ensucia el documento |
+| `Feature.Suppress = True/False` | `features suppress`, `features unsuppress` | verificado en pieza ordenada con extrusión y corte; el `Status` pasa a `suppressed` y vuelve a `ok`, y la masa deja de contar la operación |
 | STEP, STL, Parasolid, IGES, PDF, DXF | `doc.SaveCopyAs(ruta)`, el formato sale de la extensión | verificado en pieza, chapa, ensamble y Draft; STEP con cabecera ISO-10303-21, STL binario con 12 triángulos por cubo, `.x_t` con cabecera Parasolid, IGES con sección de inicio |
 | PNG | `View.SaveAsImage(ruta, 1920, 1080)` | verificado en pieza, chapa y ensamble (con `View.Fit()` antes); **corregido** en Draft: su `SheetWindow` no tiene `View`, `Fit` y `SaveAsImage` son de la ventana |
 | Draft nuevo | `Documents.Add("SolidEdge.DraftDocument")` | verificado (hoja A2 por defecto) |
