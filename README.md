@@ -604,6 +604,31 @@ medirlo para `--scale auto` y no estaba abierto.
   izquierda, la superior encima, la derecha al lado y la isométrica en la esquina libre. Se deja un
   margen de 15 mm y 30 mm abajo para el cuadro de rotulación.
 
+### `se draft parts-list` y `se draft dim`
+
+```powershell
+se --json draft parts-list --view 1 --balloons
+# {"ok": true, "data": {"vista": 1, "modelo": "C:\p\Conj.asm", "filas": 1, "globos": true, "globos_agregados": 1}, "error": null}
+se --json draft dim --view 1 --auto
+# {"ok": true, "data": {"vista": 1, "cotas_antes": 0, "cotas_despues": 1, "cotas_agregadas": 1}, "error": null}
+```
+Trabajan sobre el Draft activo o `--doc <selector>`; `--view N` es la vista de la hoja activa
+(1-based, por defecto 1, en el orden en que se agregaron). Un documento que no es Draft o `--view`
+menor que 1 da exit 2; una vista que no existe, exit 5. Los dos modifican el Draft (no lo guardan)
+y respetan `--readonly` y `--dry-run`.
+
+- `parts-list [--view N] [--balloons] [--doc]`: inserta la lista de piezas de la vista, que tiene que
+  ser de un `.asm` (con una vista de pieza Solid Edge no se queja y arma una lista de una fila, así
+  que se rechaza antes con exit 2). `filas` es `PartsList.Rows.Count` (las ocurrencias repetidas
+  se agrupan: dos cajas iguales dan una fila) y `globos_agregados` la diferencia de
+  `Sheet.Balloons.Count`; ambos son `null` si la API no los da. Un rechazo de Solid Edge sale con
+  exit 4.
+- `dim --view N --auto [--doc]`: recupera las cotas del modelo en la vista. `--auto` es obligatorio
+  y el único modo (sin él, exit 2). Las cotas se cuentan en toda la hoja (`Sheet.Dimensions`), así
+  que `cotas_agregadas` es la diferencia; repetirlo da 0. Solo recupera las cotas del modelo que
+  se ven en esa vista: en una caja extruida, la frontal da la altura de la extrusión y la
+  superior no suma las del croquis.
+
 ### `se sheetmetal flat-dxf`
 
 ```powershell
@@ -671,6 +696,8 @@ Validados el 2026-11-23 contra Solid Edge 2026 Community Edition 226.00.01.04.
 | Hoja | `ActiveSheet.SheetSetup.SheetSizeOption = igIso<A>Wide` | verificado; **corregido**: además hay que reemplazar el fondo (`ActiveSheet.Background = Sections.BackgroundSection.Sheets.Item("A3-Sheet")`) o el marco y el rotulo salen recortados |
 | Enlace y vistas | `ModelLinks.Add(ruta)`; `DrawingViews.AddPartView`, `AddSheetMetalView`, `AddAssemblyView` con `(enlace, orientación, escala, x, y, 0)` | verificado: los tres existen y `x, y` es el centro de la vista; las vistas quedan dentro de la hoja y sin superponerse |
 | Caja del modelo | `Models.Item(1).Body.GetRange([0]*3, [0]*3)`; ensamble `Occurrence.GetRangeBox` | verificado (devuelve mínimo y máximo); la escala `auto` es razonable |
+| Lista de piezas y globos | `Draft.PartsLists.Add(vista, "", autoGlobos, 1)`; `PartsList.Rows.Count`, `Sheet.Balloons.Count` | verificado en la vista de un ensamble con dos ocurrencias iguales: 1 fila y 1 globo con `autoGlobos=1`, ninguno con 0; **diferencia con el MCP**: `PartsLists.Add` también acepta una vista de pieza (lista de una fila), por eso se valida `View.ModelLink.FileName` antes |
+| Cotas automáticas | `DrawingView.RetrieveDimensions()` (sin argumentos); `Sheet.Dimensions.Count` | verificado: la vista frontal de una caja suma 1 cota, repetirlo suma 0; `AddConnectedAnnotationsToView` no se probó |
 | Desarrollo | `FlatPatternModels.Count`; `Models.SaveAsFlatDXFEx(ruta, None, None, None, True)` | verificado con un desarrollo guardado en el archivo; sin desarrollo da exit 5 (ver arriba) |
 | `Application.Quit` | `se quit --yes` | verificado: vuelve sin error, `Edge.exe` termina y `status` da `conectado: false` |
 | `connect --launch` | `Dispatch("SolidEdge.Application")` | verificado: arranca **oculta** (`Visible=False`) y sigue viva al terminar `se`; se le pone `Visible=True` |

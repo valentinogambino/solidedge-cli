@@ -1544,3 +1544,79 @@ def con_chapa_creable(doc: DocumentoFalso, caras: list[CaraFalsa] | None = None)
     doc.FlatPatternModels = DesarrollosFalsos(doc)
     doc.dxf_siempre_vacio = False
     return doc
+
+
+# --- Anotaciones de un Draft: lista de piezas, globos y cotas ---------------------------------
+
+ESCRITURAS = ESCRITURAS | {"PartsLists.Add", "DrawingView.RetrieveDimensions"}
+
+
+class EnlaceDeVistaFalso:
+    def __init__(self, ruta: str) -> None:
+        self.FileName = ruta
+
+
+class FilasFalsas:
+    def __init__(self, cantidad: int) -> None:
+        self.Count = cantidad
+
+
+class ListaDePiezasFalsa:
+    def __init__(self, filas: int) -> None:
+        self.Rows = FilasFalsas(filas)
+
+
+class ListasDePiezasFalsas(_ConFallos):
+    """`Draft.PartsLists`: con `autoGlobos` suma un globo por fila, como Solid Edge."""
+
+    def __init__(self, doc: DocumentoFalso, filas: int) -> None:
+        super().__init__()
+        self.doc = doc
+        self.filas = filas
+        self.listas: list[ListaDePiezasFalsa] = []
+
+    @property
+    def Count(self) -> int:
+        return len(self.listas)
+
+    def Add(self, vista, guardada, auto_globos, crear) -> ListaDePiezasFalsa:
+        self.doc.registro.append(("PartsLists.Add", vista.indice, guardada, auto_globos, crear))
+        self._tocar("Add")
+        lista = ListaDePiezasFalsa(self.filas)
+        self.listas.append(lista)
+        if auto_globos and self.doc.ActiveSheet.Balloons is not None:
+            self.doc.ActiveSheet.Balloons.Count += self.filas
+        return lista
+
+
+class ConteoFalso:
+    def __init__(self) -> None:
+        self.Count = 0
+
+
+class VistaDeDibujoFalsa(_ConFallos):
+    def __init__(self, doc: DocumentoFalso, indice: int, modelo: str, cotas: int) -> None:
+        super().__init__()
+        self.doc = doc
+        self.indice = indice
+        self.ModelLink = EnlaceDeVistaFalso(modelo)
+        self.cotas = cotas
+
+    def RetrieveDimensions(self) -> None:
+        self.doc.registro.append(("DrawingView.RetrieveDimensions", self.indice))
+        self._tocar("RetrieveDimensions")
+        self.doc.ActiveSheet.Dimensions.Count += self.cotas
+        self.cotas = 0  # una segunda pasada no encuentra nada nuevo
+
+
+def con_anotaciones(
+    doc: DocumentoFalso, modelos: list[str], *, filas: int = 1, cotas: int = 2
+) -> DocumentoFalso:
+    """Armá un Draft con una vista por modelo, `PartsLists`, `Balloons` y `Dimensions`."""
+    doc.ActiveSheet.Balloons = ConteoFalso()
+    doc.ActiveSheet.Dimensions = ConteoFalso()
+    doc.ActiveSheet.DrawingViews = ColeccionFalsa(
+        [VistaDeDibujoFalsa(doc, i, m, cotas) for i, m in enumerate(modelos, 1)]
+    )
+    doc.PartsLists = ListasDePiezasFalsas(doc, filas)
+    return doc
