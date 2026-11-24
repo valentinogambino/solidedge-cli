@@ -731,16 +731,23 @@ ESCRITURAS = ESCRITURAS | {
     "Occurrence.PutTransform",
     "Occurrence.Delete",
     "Relations3d.AddGround",
+    "Relations3d.AddPlanar",
+    "Relations3d.AddAxial",
+    "Relation3d.Offset",
     "Relation3d.Delete",
 }
 
 RELACION_FIJA = 1959028688  # igGroundRelation3d
+RELACION_AXIAL = 1472929712  # igAxialRelation3d
+RELACION_PLANAR = -2058948880  # igPlanarRelation3d
 
 
 class RelacionFalsa:
     def __init__(self, relaciones: RelacionesFalsas, ocurrencia: OcurrenciaFalsa) -> None:
         self.relaciones = relaciones
         self.Type = RELACION_FIJA
+        self.Status = 1
+        self.DetailedStatus = 1
         self.Occurrence = ocurrencia
 
     def Delete(self) -> None:
@@ -758,6 +765,9 @@ class RelacionesFalsas(ColeccionFalsa):
         self.doc = doc
         self.ignora_escritura = False  # simula un Solid Edge que no crea la relación
         self.ignora_borrado = False
+        self.ignora_offset = False  # el Offset se acepta pero no se aplica
+        self.rechazo: Exception | None = None  # AddPlanar/AddAxial levantan este error
+        self.detalle_forzado: int | None = None  # DetailedStatus de las relaciones nuevas
 
     def AddGround(self, ocurrencia: OcurrenciaFalsa) -> RelacionFalsa:
         self.doc.registro.append(("Relations3d.AddGround", ocurrencia.Name))
@@ -765,6 +775,102 @@ class RelacionesFalsas(ColeccionFalsa):
         if not self.ignora_escritura:
             self.elementos.append(relacion)
         return relacion
+
+    def _fija(self, ocurrencia: OcurrenciaFalsa) -> bool:
+        return any(
+            isinstance(r, RelacionFalsa) and r.Occurrence is ocurrencia for r in self.elementos
+        )
+
+    def _alta_de_dos(self, tipo, ref_a, ref_b, alineadas, registro) -> RelacionDeDosFalsa:
+        self.doc.registro.append(registro)
+        if self.rechazo is not None:
+            raise self.rechazo
+        relacion = RelacionDeDosFalsa(self, tipo, ref_a.ocurrencia, ref_b.ocurrencia, alineadas)
+        if self.detalle_forzado is not None:
+            relacion.DetailedStatus = self.detalle_forzado
+        elif self._fija(ref_a.ocurrencia) and self._fija(ref_b.ocurrencia):
+            relacion.DetailedStatus = 4  # BetweenFixed
+        if not self.ignora_escritura:
+            self.elementos.append(relacion)
+        return relacion
+
+    def AddPlanar(self, ref_a, ref_b, alineadas, punto_a, punto_b) -> RelacionDeDosFalsa:
+        return self._alta_de_dos(
+            RELACION_PLANAR,
+            ref_a,
+            ref_b,
+            alineadas,
+            (
+                "Relations3d.AddPlanar",
+                ref_a.ocurrencia.Name,
+                ref_a.cara.indice,
+                ref_b.ocurrencia.Name,
+                ref_b.cara.indice,
+                alineadas,
+            ),
+        )
+
+    def AddAxial(self, ref_a, ref_b, alineadas) -> RelacionDeDosFalsa:
+        return self._alta_de_dos(
+            RELACION_AXIAL,
+            ref_a,
+            ref_b,
+            alineadas,
+            (
+                "Relations3d.AddAxial",
+                ref_a.ocurrencia.Name,
+                ref_a.cara.indice,
+                ref_b.ocurrencia.Name,
+                ref_b.cara.indice,
+                alineadas,
+            ),
+        )
+
+
+class ReferenciaFalsa:
+    """Lo que devuelve `AssemblyDocument.CreateReference(ocurrencia, cara)`."""
+
+    def __init__(self, ocurrencia: OcurrenciaFalsa, cara) -> None:
+        self.ocurrencia, self.cara = ocurrencia, cara
+
+
+class RelacionDeDosFalsa:
+    """Relación planar o axial entre dos ocurrencias.
+
+    Como en Solid Edge 2026 CE, `NormalsAligned` se lee al revés de lo que se pasó a `AddPlanar`
+    (mate lee False) y con las dos ocurrencias fijas `DetailedStatus` es `BetweenFixed` (4).
+    """
+
+    def __init__(self, relaciones, tipo, ocurrencia_1, ocurrencia_2, alineadas) -> None:
+        self.relaciones = relaciones
+        self.Type = tipo
+        self.Occurrence1, self.Occurrence2 = ocurrencia_1, ocurrencia_2
+        self.Status = 1
+        self.DetailedStatus = 1
+        self._offset = 0.0
+        self.rechaza_offset = False
+        if tipo == RELACION_PLANAR:
+            self.NormalsAligned = not alineadas
+
+    @property
+    def Offset(self) -> float:
+        if self.Type != RELACION_PLANAR:
+            raise com_error(0x80020006, "Miembro no encontrado")
+        return self._offset
+
+    @Offset.setter
+    def Offset(self, valor: float) -> None:
+        self.relaciones.doc.registro.append(("Relation3d.Offset", valor))
+        if self.rechaza_offset or self.Type != RELACION_PLANAR:
+            raise com_error(0x80004005, "Error no especificado")
+        if not self.relaciones.ignora_offset:
+            self._offset = valor
+
+    def Delete(self) -> None:
+        self.relaciones.doc.registro.append(("Relation3d.Delete", self.Occurrence1.Name))
+        if self.relaciones.ignora_borrado:
+            return
+        self.relaciones.elementos.remove(self)
 
 
 class OcurrenciasFalsas(ColeccionFalsa):
@@ -842,9 +948,21 @@ OcurrenciaFalsa.Move = _move
 OcurrenciaFalsa.Delete = _delete
 
 
+def pieza_con_caras(nombre: str, tipos: list[int] | None = None) -> DocumentoFalso:
+    """Pieza ordenada con cuerpo de caras `tipos` (por defecto 6 planos), la de una ocurrencia."""
+    pieza = con_modelado(DocumentoFalso(nombre, tipo=1))
+    modelo = ModeloParteFalso(pieza, espesor=0.02)
+    modelo.Body.caras = [
+        CaraDeCuerpoFalsa(n, tipo) for n, tipo in enumerate(tipos or [GEOMETRIA_PLANO] * 6, 1)
+    ]
+    pieza.Models.elementos.append(modelo)
+    return pieza
+
+
 def con_armado(doc: DocumentoFalso, ocurrencias: list[OcurrenciaFalsa] | None = None):
     """Prepará un ensamble para `asm add|ground|move|remove`; `ocurrencias` nacen fijas."""
     doc.Relations3d = RelacionesFalsas(doc)
+    doc.CreateReference = lambda ocurrencia, cara: ReferenciaFalsa(ocurrencia, cara)
     doc.Occurrences = OcurrenciasFalsas(doc, ocurrencias)
     for ocurrencia in doc.Occurrences.elementos:
         doc.Relations3d.elementos.append(RelacionFalsa(doc.Relations3d, ocurrencia))
@@ -1258,6 +1376,9 @@ GEOMETRIA_ELIPSE = 167551107  # igEllipse
 class GeometriaDeCuerpoFalsa:
     def __init__(self, tipo: int) -> None:
         self.Type = tipo
+
+    def GetRootPoint(self, buffer):
+        return (0.0, 0.0, 0.0)
 
 
 class CaraDeCuerpoFalsa:
