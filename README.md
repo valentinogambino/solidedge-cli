@@ -226,7 +226,7 @@ informa el área (`area: null`). Verificado: cubo de 50 mm a 7850 kg/m3 da volum
 
 ```powershell
 se --json asm tree [--depth 10]
-# {"ok": true, "data": {"documento": "Conj.asm", "profundidad": 10, "arbol": [{"nombre": "Sub.asm:1", "archivo": "C:\p\Sub.asm", "cantidad": 2, "visible": true, "ensamble": true, "hijos": [{"nombre": "tornillo.par:1", "archivo": "C:\p\tornillo.par", "cantidad": 3, "visible": true, "ensamble": false, "hijos": []}]}]}, "error": null}
+# {"ok": true, "data": {"documento": "Conj.asm", "profundidad": 10, "arbol": [{"nombre": "Sub.asm:1", "archivo": "C:\p\Sub.asm", "cantidad": 2, "visible": true, "ensamble": true, "indice": 1, "indices": [1, 2], "hijos": [{"nombre": "tornillo.par:1", "archivo": "C:\p\tornillo.par", "cantidad": 3, "visible": true, "ensamble": false, "hijos": []}]}]}, "error": null}
 se --json asm tree --flat
 # {"ok": true, "data": {"documento": "Conj.asm", "cantidad": 2, "materiales": [{"archivo": "C:\p\Sub.asm", "cantidad": 2, "ensamble": true}, {"archivo": "C:\p\tornillo.par", "cantidad": 6, "ensamble": false}]}, "error": null}
 ```
@@ -235,6 +235,45 @@ niveles a expandir (1 = solo el primer nivel; lo que queda sin expandir lleva `t
 un ciclo se corta con `ciclo: true`. `--flat` multiplica las cantidades a través de los
 subensambles. En modo humano el árbol sale con `rich.tree`. Solo ensambles: otro tipo da exit 2.
 `Occurrence` no tiene miembro de supresión, así que el nodo no informa `suprimido`.
+Los nodos de primer nivel llevan `indice`: la posición 1-based de la ocurrencia en el ensamble, que
+es el `<occ>` de `asm ground|move|remove` (si el nodo agrupa varias, `indices` las lista todas;
+el nombre de cada una, ej. `caja.par:2`, también sirve de `<occ>`).
+
+#### Armar un ensamble: `asm add|ground|move|remove`
+
+```powershell
+se --json asm add C:\p\caja.par [--at 10mm,0,5mm] [--rot 0,0,90deg] [--units mm,deg] [--doc Conj.asm]
+# {"ok": true, "data": {"indice": 2, "nombre": "caja.par:2", "archivo": "C:\p\caja.par", "visible": true, "ensamble": false, "fija": true, "posicion": [0.01, 0.0, 0.005], "rotacion": [0.0, 0.0, 1.5707963267948966], "unidades": {"longitud": "m", "angulo": "rad"}}, "error": null}
+se --json asm ground caja.par:2 [--release]
+# {"ok": true, "data": {"indice": 2, "nombre": "caja.par:2", ..., "fija": true, "changed": false}, "error": null}
+se --json asm move 2 --by 5mm,0,0          # desplazamiento relativo
+se --json asm move 2 --at 10mm,20mm,0      # posición absoluta (los ángulos quedan)
+se --json asm move 2 --rot 0,0,90deg       # ángulos absolutos (la posición queda)
+se --json asm remove caja.par:2
+# {"ok": true, "data": {"indice": 2, "nombre": "caja.par:2", "archivo": "C:\p\caja.par", "removed": true, "restantes": 1}, "error": null}
+```
+Todos modifican, aceptan `--doc` y siguen las reglas globales: `--readonly` los bloquea (exit 6) y
+`--dry-run` informa el plan sin tocar Solid Edge. Solo ensambles (otro tipo, exit 2).
+
+- `<occ>`: índice 1-based de la ocurrencia de primer nivel (el `indice` de `asm tree`) o su nombre,
+  sin distinguir mayúsculas. Si no existe, exit 5.
+- `add` inserta una pieza, chapa o ensamble (`.par`, `.psm`, `.asm`, `.pwd`). Sin `--at` ni `--rot`
+  va al origen. Un archivo que no existe da exit 5; una extensión no insertable, o el propio
+  ensamble, exit 2. Admite el mismo archivo varias veces (cada una es una ocurrencia).
+- `--at`, `--by` y `--rot` toman tres valores `X,Y,Z`. Longitudes con unidad (`10mm`) y ángulos
+  con unidad (`90deg`); **sin unidad, SI**: metros y radianes, como en el resto de la CLI (ej.
+  `--rot 0,0,1.5708` son radianes; para grados escribí `deg`). Posición en coordenadas del
+  ensamble; los ángulos son los de Euler que Solid Edge devuelve en `GetTransform`.
+- `move` necesita al menos una de `--at` (absoluta), `--by` (relativa; no se combina con
+  `--at`) o `--rot` (absoluta). Lo que no se pasa se conserva.
+- `ground` es idempotente: si ya está fija no escribe y `changed` es `false`. **Solid Edge crea toda
+  ocurrencia ya fija** (cada `add` trae su relación ground), así que `ground` solo cambia algo
+  después de soltarla con `--release` (que borra esa relación). Mover una ocurrencia fija funciona
+  igual por la API.
+- `remove` borra la ocurrencia y sus relaciones; el archivo de la pieza no se toca.
+- `data` sale de lo que Solid Edge tiene después de la operación (si no coincide con lo pedido,
+  exit 4): `posicion` y `rotacion` en metros y radianes, o en lo que pida `--units` (`mm,deg`); `fija`
+  es si la ocurrencia tiene su relación ground.
 
 ```powershell
 se --json features list
@@ -552,6 +591,11 @@ Validados el 2026-11-23 contra Solid Edge 2026 Community Edition 226.00.01.04.
 | masa de un ensamble | `doc.ComputePhysicalPropertiesWithSpecifiedDensity` | **corregido**: no existe; se usa `PhysicalProperties.Update()` + `GetAssemblyPhysicalProperties()` (sin densidad ni área) |
 | `Occurrence`, `GetRangeBox`, `Features` | `asm tree`, `features list` | verificado; leer `Features.Count` ensucia el documento |
 | `Feature.Suppress = True/False` | `features suppress`, `features unsuppress` | verificado en pieza ordenada con extrusión y corte; el `Status` pasa a `suppressed` y vuelve a `ok`, y la masa deja de contar la operación |
+| `Occurrences.AddByFilename(ruta)` / `AddWithTransform(ruta, x, y, z, rx, ry, rz)` | `asm add` | verificado en ensamble nuevo guardado con una caja extruida; posición en metros, ángulos de Euler en radianes; el MCP usa además `AddWithMatrix`, que no hace falta |
+| `Occurrence.GetTransform()` / `PutTransform(x, y, z, rx, ry, rz)` | `asm add`, `asm move` | verificado: la terna que devuelve `GetTransform` es la que acepta `PutTransform` (ida y vuelta exacta, también con rotaciones en X, Y y Z a la vez) |
+| `Occurrence.Move(dx, dy, dz)` | `asm move --by` | verificado: suma a la posición sin tocar los ángulos |
+| `Relations3d`, `AddGround(occ)`, `Relation.Delete()` | `asm ground`, `asm ground --release` | verificado; **corregido**: la relación ground es de tipo `igGroundRelation3d` (1959028688), no `Type = 0` como dice el MCP; toda ocurrencia nace fija (una relación por ocurrencia, `Relation.Occurrence` apunta a ella); `AddGround` sobre una ya fija no duplica pero reordena las relaciones, por eso se mira antes; mover (`Move`, `PutTransform`) una ocurrencia fija funciona |
+| `Occurrence.Delete()` | `asm remove` | verificado: baja `Occurrences.Count`, se llevan las relaciones, el archivo queda |
 | STEP, STL, Parasolid, IGES, PDF, DXF | `doc.SaveCopyAs(ruta)`, el formato sale de la extensión | verificado en pieza, chapa, ensamble y Draft; STEP con cabecera ISO-10303-21, STL binario con 12 triángulos por cubo, `.x_t` con cabecera Parasolid, IGES con sección de inicio |
 | PNG | `View.SaveAsImage(ruta, 1920, 1080)` | verificado en pieza, chapa y ensamble (con `View.Fit()` antes); **corregido** en Draft: su `SheetWindow` no tiene `View`, `Fit` y `SaveAsImage` son de la ventana |
 | Draft nuevo | `Documents.Add("SolidEdge.DraftDocument")` | verificado (hoja A2 por defecto) |

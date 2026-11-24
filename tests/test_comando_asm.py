@@ -56,6 +56,8 @@ def test_tree_anidado_camino_feliz(cli, anidado):
         "cantidad": 2,
         "visible": True,
         "ensamble": True,
+        "indice": 1,
+        "indices": [1, 2],
         "hijos": [
             {
                 "nombre": "base.par:1",
