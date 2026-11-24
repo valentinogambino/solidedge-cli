@@ -50,7 +50,7 @@ def test_camino_feliz_crea_entidades_y_relaciones(cli, app_falsa, pieza, archivo
     arcos = [c[1:] for c in _llamadas(app_falsa, "Arcs2d.AddByCenterStartEnd")]
     assert arcos[0] == (0.05, 0.01, 0.05, 0.0, 0.05, 0.02)  # ccw: tal cual
     assert arcos[1] == (0.0, 0.01, 0.0, 0.02, 0.0, 0.0)  # cw: start y end intercambiados
-    assert _llamadas(app_falsa, "Profile.End") == [("Profile.End", 1)]
+    assert _llamadas(app_falsa, "Profile.End") == [("Profile.End", 8193)]  # Closed | AllowNested
     assert app_falsa.historial_alertas == [False, True]
     assert not _llamadas(app_falsa, "ProfileSet.Delete")
 

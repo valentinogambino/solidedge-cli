@@ -47,6 +47,12 @@ EJES = ("x", "y")
 # `Profile.End` devuelve 0 o -103 con un perfil bien armado (ver el docstring del módulo).
 FIN_DE_PERFIL_VALIDO = (0, -103)
 
+# Bandera de `Profile.End` que admite lazos anidados (un círculo o un contorno dentro de otro). No
+# está en el typelib: la documenta el MCP y se verificó en vivo (2026-11-24). Sin ella un perfil
+# con un lazo adentro de otro da -113 al cerrarlo y no extruye; con ella, y con los extremos
+# unidos por relaciones, cierra con 0 y extruye con el agujero.
+PERFIL_ANIDADO = 8192
+
 # Largo (en metros) de la línea de construcción que hace de eje de revolución.
 LARGO_DE_EJE = 0.5
 
@@ -190,8 +196,9 @@ def _nuevo_perfil(doc: Any, indice_plano: int) -> tuple[int, Any]:
     return int(leer(lambda: conjuntos.Count)), perfil
 
 
-def _cerrar_perfil(perfil: Any) -> int:
-    codigo = leer(lambda: perfil.End(constante("igProfileClosed")))
+def _cerrar_perfil(perfil: Any, anidado: bool = False) -> int:
+    bandera = constante("igProfileClosed") | (PERFIL_ANIDADO if anidado else 0)
+    codigo = leer(lambda: perfil.End(bandera))
     codigo = int(codigo or 0)
     if codigo not in FIN_DE_PERFIL_VALIDO:
         raise ErrorCom(
@@ -420,7 +427,7 @@ def crear_perfil(doc: Any, perfil: croquis.Perfil) -> dict[str, Any]:
             extra = {"restriccion": numero, "tipo": restriccion["tipo"]}
             _agregar_restriccion(relaciones, restriccion, objetos, datos)
         etapa, extra = "cierre", {}
-        codigo = _cerrar_perfil(objeto)
+        codigo = _cerrar_perfil(objeto, anidado=True)
     except Exception as error:  # noqa: BLE001 - se traduce y se limpia
         borrado = conjunto is not None and _borrar_conjunto(conjunto)
         raise _con_etapa(error, etapa, borrado, extra) from error
