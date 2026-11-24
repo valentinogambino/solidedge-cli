@@ -12,7 +12,8 @@ from typing import Any
 
 from se_cli.core.acceso import exigir_tipo, items, leer, opcional
 from se_cli.core.constants import FeatureStatusConstants, FeatureTypeConstants
-from se_cli.core.errors import DocNoEncontrado, ErrorCom
+from se_cli.core.constants import valor as constante
+from se_cli.core.errors import DocNoEncontrado, ErrorCom, NoSoportado, traducir
 
 TIPOS_SOPORTADOS = ("part", "sheetmetal")
 
@@ -109,6 +110,10 @@ def indice_de_operacion(doc: Any, nombre: str) -> int | None:
     return None
 
 
+def _es_sincronico(doc: Any) -> bool:
+    return opcional(lambda: int(doc.ModelingMode)) == constante("seModelingModeSynchronous")
+
+
 def cambiar_supresion(doc: Any, selector: str, suprimir: bool) -> dict[str, Any]:
     """Suprimí o reactivá una operación. Devuelve su descripción y `changed`.
 
@@ -121,7 +126,18 @@ def cambiar_supresion(doc: Any, selector: str, suprimir: bool) -> dict[str, Any]
     antes = _describir(indice, feature)
     if antes["suprimida"] is suprimir:
         return {**antes, "changed": False}
-    leer(lambda: setattr(feature, "Suppress", suprimir))
+    try:
+        leer(lambda: setattr(feature, "Suppress", suprimir))
+    except Exception as error:
+        # Verificado en vivo (2026-11-24): en una chapa en modo sincrónico `Suppress` falla con
+        # un error COM genérico (0x80020009) en Tab y Flange; en ordenado funciona.
+        if not isinstance(traducir(error), ErrorCom) or not _es_sincronico(doc):
+            raise
+        raise NoSoportado(
+            f"Solid Edge no deja {'suprimir' if suprimir else 'reactivar'} {antes['nombre']!r} "
+            "con el documento en modo sincrónico. Pasalo a modo ordenado en Solid Edge.",
+            details={"modo": "sincronico", "operacion": antes["nombre"]},
+        ) from error
     despues = _describir(indice, feature)
     if despues["suprimida"] is not suprimir:
         raise ErrorCom(

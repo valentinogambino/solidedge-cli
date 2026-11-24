@@ -340,6 +340,9 @@ no existe da exit 5; un documento que no es pieza ni chapa, exit 2. Son idempote
 ya está en el estado pedido no se escribe nada y `changed` es `false`. `suprimida` y `estado` son lo
 que Solid Edge informa después de escribir (si no coincide con lo pedido, exit 4). La supresión
 cambia el modelo: `se mass` ya no cuenta una operación suprimida.
+En una **chapa en modo sincrónico** Solid Edge rechaza `Suppress` (verificado en vivo con `Tab` y
+`Flange`, error COM genérico 0x80020009): el comando da exit 6 (`no_soportado`, `details.modo`
+`sincronico`). En modo ordenado suprimir y reactivar un `Tab` funciona y `se mass` pasa a 0 y vuelve.
 
 ## Modelado básico (F5)
 
