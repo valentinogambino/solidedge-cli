@@ -1,7 +1,7 @@
 """`se mass` sobre el COM falso."""
 
 import pytest
-from com_falso import ColeccionFalsa, ModeloFalso
+from com_falso import ColeccionFalsa, ModeloFalso, OcurrenciaFalsa
 
 CLAVES = {
     "masa",
@@ -192,6 +192,72 @@ def test_ensamble_con_density_no_esta_soportado(cli, app_falsa):
 
     assert r.exit_code == 6 and sobre["error"]["code"] == "no_soportado"
     assert app_falsa.escrituras == []
+
+
+class _PiezaConMaterial:
+    def __init__(self, material: str) -> None:
+        self.material = material
+
+
+def _con_piezas(asm, *piezas):
+    """Ocurrencias `(archivo, material)`; un material None deja la pieza sin abrir."""
+    ocurrencias = []
+    for n, (archivo, material) in enumerate(piezas, 1):
+        ocurrencia = OcurrenciaFalsa(f"{archivo}:{n}", f"C:\\p\\{archivo}")
+        if material is not None:
+            ocurrencia.OccurrenceDocument = _PiezaConMaterial(material)
+        ocurrencias.append(ocurrencia)
+    asm.Occurrences = ColeccionFalsa(ocurrencias)
+
+
+def test_ensamble_lista_las_piezas_sin_material_y_no_cambia_la_masa(cli, app_falsa):
+    asm = app_falsa.agregar_documento("Conj.asm", ruta="C:\\p\\Conj.asm", tipo=3)
+    _con_piezas(
+        asm,
+        ("A.par", "Acero"),
+        ("B.par", ""),
+        ("B.par", ""),
+        ("C.par", "Aluminio"),
+        ("D.par", None),
+    )
+
+    r, sobre = cli("mass", "--doc", "Conj.asm")
+
+    data = sobre["data"]
+    assert r.exit_code == 0
+    assert data["masa"] == pytest.approx(7.85)
+    assert data["piezas_sin_material"] == [{"archivo": "C:\\p\\B.par", "cantidad": 2}]
+    assert "1 pieza(s)" in data["advertencia"]
+
+
+def test_ensamble_con_todas_las_piezas_con_material_no_advierte(cli, app_falsa):
+    asm = app_falsa.agregar_documento("Conj.asm", ruta="C:\\p\\Conj.asm", tipo=3)
+    _con_piezas(asm, ("A.par", "Acero"))
+
+    r, sobre = cli("mass", "--doc", "Conj.asm")
+
+    assert r.exit_code == 0
+    assert sobre["data"]["piezas_sin_material"] == []
+    assert "advertencia" not in sobre["data"]
+
+
+def test_ensamble_baja_a_los_subensambles(cli, app_falsa):
+    asm = app_falsa.agregar_documento("Conj.asm", ruta="C:\\p\\Conj.asm", tipo=3)
+    hoja = OcurrenciaFalsa("P:1", "C:\\p\\P.par")
+    hoja.OccurrenceDocument = _PiezaConMaterial("")
+    asm.Occurrences = ColeccionFalsa([OcurrenciaFalsa("S:1", "C:\\p\\S.asm", hijos=[hoja])])
+
+    r, sobre = cli("mass", "--doc", "Conj.asm")
+
+    assert r.exit_code == 0
+    assert sobre["data"]["piezas_sin_material"] == [{"archivo": "C:\\p\\P.par", "cantidad": 1}]
+
+
+def test_pieza_no_suma_claves_de_material(cli, app_falsa, pieza):
+    r, sobre = cli("mass")
+
+    assert r.exit_code == 0
+    assert "piezas_sin_material" not in sobre["data"]
 
 
 @pytest.mark.parametrize("tipo", [2, 6, 8])

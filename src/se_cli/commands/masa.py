@@ -37,7 +37,7 @@ def registrar(app: typer.Typer) -> None:
             valor = fisica.validar_densidad(density)
 
             def trabajo(app):
-                return fisica.propiedades(acceso.documento(app, doc), valor, elegidas)
+                return fisica.propiedades(acceso.documento(app, doc), valor, elegidas, app=app)
 
             if valor is None:
                 return sesion.llamar(trabajo)

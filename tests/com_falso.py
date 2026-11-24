@@ -1060,6 +1060,13 @@ class DocumentosFalsos(_ConFallos):
         return self._agregar(doc)
 
 
+class TablaDeMaterialesFalsa:
+    """`Application.GetMaterialTable()`: el material de un documento está en su `material`."""
+
+    def GetCurrentMaterialName(self, doc: Any) -> str:
+        return getattr(doc, "material", "")
+
+
 class AplicacionFalsa(_ConFallos):
     """`Application` falsa. Los atributos con fallos programables son propiedades.
 
@@ -1083,6 +1090,10 @@ class AplicacionFalsa(_ConFallos):
     @property
     def escrituras(self) -> list[tuple]:
         return [llamada for llamada in self.registro if llamada[0] in ESCRITURAS]
+
+    def GetMaterialTable(self) -> TablaDeMaterialesFalsa:
+        self._tocar("GetMaterialTable")
+        return TablaDeMaterialesFalsa()
 
     @property
     def Version(self) -> str:
