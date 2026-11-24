@@ -223,16 +223,23 @@ def test_pdf_y_dxf_solo_de_draft(cli, app_falsa, tmp_path, nombre, tipo, formato
 
 
 @pytest.mark.parametrize(
-    ("nombre", "tipo"), [("P.par", 1), ("C.psm", 4), ("E.asm", 3), ("D.dft", 2)]
+    ("nombre", "tipo", "tamano"),
+    [
+        ("P.par", 1, (1920, 1080)),
+        ("C.psm", 4, (1920, 1080)),
+        ("E.asm", 3, (1920, 1080)),
+        # Draft: la proporción sigue a la hoja (A4 apaisada por defecto), no 16:9.
+        ("D.dft", 2, (1920, 1358)),
+    ],
 )
-def test_png_de_la_vista_de_cualquier_tipo(cli, app_falsa, tmp_path, nombre, tipo):
+def test_png_de_la_vista_de_cualquier_tipo(cli, app_falsa, tmp_path, nombre, tipo, tamano):
     _doc(app_falsa, tmp_path, nombre, tipo=tipo)
 
     r, sobre = cli("export", "--format", "png")
 
     salida = tmp_path / f"{nombre.split('.')[0]}.png"
     assert r.exit_code == 0, r.output
-    assert ("View.SaveAsImage", nombre, str(salida), 1920, 1080) in app_falsa.registro
+    assert ("View.SaveAsImage", nombre, str(salida), *tamano) in app_falsa.registro
     llamadas = [c[0] for c in app_falsa.registro]
     assert llamadas.index("View.Fit") < llamadas.index("View.SaveAsImage")
     assert _copias(app_falsa) == []
@@ -257,3 +264,21 @@ def test_png_sin_contenido_es_error(cli, app_falsa, tmp_path):
     doc.modo_exportacion = "vacio"
     r, _ = cli("export", "--format", "png")
     assert r.exit_code == 4 and not (tmp_path / "Pieza.png").exists()
+
+
+@pytest.mark.parametrize(
+    ("ancho", "alto", "tamano"),
+    [(0.420, 0.297, (1920, 1358)), (0.297, 0.420, (1358, 1920)), (0.0, 0.0, (1920, 1080))],
+)
+def test_png_de_draft_conserva_la_proporcion_de_la_hoja(
+    cli, app_falsa, tmp_path, ancho, alto, tamano
+):
+    doc = _doc(app_falsa, tmp_path, "D.dft", tipo=2)
+    doc.ActiveSheet.SheetSetup.SheetWidth = ancho
+    doc.ActiveSheet.SheetSetup.SheetHeight = alto
+
+    r, _ = cli("export", "--format", "png")
+
+    assert r.exit_code == 0, r.output
+    salida = tmp_path / "D.png"
+    assert ("View.SaveAsImage", "D.dft", str(salida), *tamano) in app_falsa.registro

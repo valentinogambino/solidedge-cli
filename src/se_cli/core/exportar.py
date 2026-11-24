@@ -29,7 +29,8 @@ TIPOS_SOLIDOS = ("part", "sheetmetal", "assembly")
 TIPOS_DRAFT = ("draft",)
 TIPOS_CON_VENTANA = (*TIPOS_SOLIDOS, "draft")
 
-# Tamaño en píxeles de `View.SaveAsImage`.
+# Tamaño en píxeles de `View.SaveAsImage` (16:9). En un Draft se conserva la proporción de la
+# hoja: con un tamaño fijo 16:9 la hoja (A3/A4 son 1,414:1) sale recortada.
 ANCHO_PNG = 1920
 ALTO_PNG = 1080
 
@@ -82,6 +83,23 @@ def _exportar_dxf(doc: Any, ruta: str) -> None:
     leer(lambda: doc.SaveCopyAs(ruta))
 
 
+def _tamano_png(doc: Any) -> tuple[int, int]:
+    """`(ancho, alto)` en píxeles: 16:9 salvo en un Draft, donde sigue la proporción de la hoja."""
+
+    def medir() -> tuple[float, float]:
+        setup = doc.ActiveSheet.SheetSetup
+        return float(setup.SheetWidth), float(setup.SheetHeight)
+
+    hoja = acceso.opcional(medir)
+    if hoja is None or hoja[0] <= 0 or hoja[1] <= 0:
+        return ANCHO_PNG, ALTO_PNG
+    ancho_hoja, alto_hoja = hoja
+    lado = max(ANCHO_PNG, ALTO_PNG)
+    if ancho_hoja >= alto_hoja:
+        return lado, max(1, round(lado * alto_hoja / ancho_hoja))
+    return max(1, round(lado * ancho_hoja / alto_hoja)), lado
+
+
 def _exportar_png(doc: Any, ruta: str) -> None:
     """PNG de la ventana del documento.
 
@@ -92,7 +110,8 @@ def _exportar_png(doc: Any, ruta: str) -> None:
     destino = acceso.opcional(lambda: ventana.View) or ventana
     # Un documento recién abierto no está encuadrado: sin `Fit` el modelo sale chico y corrido.
     acceso.opcional(destino.Fit)
-    leer(lambda: destino.SaveAsImage(ruta, ANCHO_PNG, ALTO_PNG))
+    ancho, alto = _tamano_png(doc)
+    leer(lambda: destino.SaveAsImage(ruta, ancho, alto))
 
 
 # --- Formatos --------------------------------------------------------------------------------
