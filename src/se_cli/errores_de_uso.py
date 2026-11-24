@@ -28,6 +28,9 @@ class GrupoSe(typer.core.TyperGroup):
     """Grupo raíz de `se`: con `--json`, un error de uso sale como sobre de error."""
 
     def main(self, args: Sequence[str] | None = None, *resto: Any, **extra: Any) -> Any:
+        # `--help` y los errores de uso de Click escriben antes de que corra ningún comando:
+        # sin esto salen en la codificación de la consola (mojibake en Git Bash).
+        salida.forzar_utf8()
         crudos = sys.argv[1:] if args is None else args
         if not pide_json(crudos) or not extra.get("standalone_mode", True):
             return super().main(args, *resto, **extra)

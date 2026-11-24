@@ -63,3 +63,22 @@ def test_help_y_version_no_cambian_con_json():
 
     assert ayuda.exit_code == 0 and "Usage" in ayuda.stdout
     assert version.exit_code == 0 and version.stdout.strip()
+
+
+def test_help_sale_en_utf8_con_codificacion_de_consola_distinta() -> None:
+    """`se --help` por un pipe con locale no UTF-8 (Git Bash) sale en UTF-8, sin mojibake."""
+    import os
+    import subprocess
+    import sys
+
+    entorno = {k: v for k, v in os.environ.items() if k != "PYTHONIOENCODING"}
+    entorno["PYTHONUTF8"] = "0"
+    proceso = subprocess.run(
+        [sys.executable, "-c", "from se_cli.cli import app; app()", "--help"],
+        capture_output=True,
+        env=entorno,
+        check=False,
+    )
+    assert proceso.returncode == 0
+    texto = proceso.stdout.decode("utf-8")  # falla si hay bytes latin-1 sueltos
+    assert "Manejá Solid Edge" in texto
