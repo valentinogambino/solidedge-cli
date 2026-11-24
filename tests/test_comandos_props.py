@@ -168,7 +168,7 @@ def test_sin_instancia_da_exit_3(cli_sin_instancia, comando):
 
 
 def test_get_omite_las_propiedades_sin_nombre(cli, app_falsa):
-    doc = app_falsa.agregar_documento("Pieza.par", ruta="C:\p\Pieza.par", tipo=1)
+    doc = app_falsa.agregar_documento("Pieza.par", ruta="C:\\p\\Pieza.par", tipo=1)
     con_propiedades(doc, {"ExtendedSummaryInformation": {"Status": 0, "": "", " ": ""}})
 
     r, sobre = cli("props", "get")
