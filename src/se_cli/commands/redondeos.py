@@ -71,7 +71,9 @@ def registrar(app: typer.Typer) -> None:
             typer.Option(
                 "--angle",
                 help="Ángulo (ej. 30deg; sin unidad, radianes): chaflán distancia + ángulo, "
-                "con todas las aristas en una misma cara. Sin esto, distancias iguales.",
+                "con todas las aristas en una misma cara. La distancia va sobre esa cara (la de "
+                "menor índice entre las comunes); el otro cateto, distancia x tan(ángulo). "
+                "Sin esto, distancias iguales.",
             ),
         ] = None,
         units: UnitsOpcion = None,

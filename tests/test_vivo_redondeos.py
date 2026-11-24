@@ -165,3 +165,26 @@ def test_errores_no_dejan_operaciones_rotas(tmp_path):
         assert _correr("round", "0", "--edges", "1", *d)[0].exit_code == 2
         assert _correr("chamfer", "1mm", "--edges", "1", "--angle", "90deg", *d)[0].exit_code == 2
         assert _correr("round", "1mm", *d)[0].exit_code == 2
+
+
+@pytest.mark.live
+def test_chaflan_con_angulo_mide_la_distancia_sobre_la_cara_de_referencia(tmp_path):
+    """Arista 7 de la caja: entre la cara 2 (y=0, referencia) y la tapa. Catetos: 4 y 4 tan 30."""
+    with _caja_propia(tmp_path) as doc:
+        d = ["--doc", doc]
+        arista = next(a for a in _aristas(doc) if a["indice"] == 7)
+        assert [c["indice"] for c in arista["caras"]] == [2, 5]
+        r, sobre = _correr("mass", "--density", "7850", "--units", "mm", *d)
+        antes = sobre["data"]
+        r, sobre = _correr("chamfer", "4mm", "--angle", "30deg", "--edges", "7", *d)
+        assert r.exit_code == 0, sobre
+        r, sobre = _correr("mass", "--density", "7850", "--units", "mm", *d)
+        despues = sobre["data"]
+        quitado = antes["volumen"] - despues["volumen"]
+        assert quitado == pytest.approx(50 * 4 * (4 * math.tan(math.radians(30))) / 2, rel=1e-6)
+        cm0, cm1 = antes["centro_de_volumen"], despues["centro_de_volumen"]
+        y = (antes["volumen"] * cm0[1] - despues["volumen"] * cm1[1]) / quitado
+        z = (antes["volumen"] * cm0[2] - despues["volumen"] * cm1[2]) / quitado
+        # El centroide de un triángulo está a 1/3 de cada cateto desde la arista (y=0, z=20).
+        assert z == pytest.approx(20 - 4 / 3, abs=1e-3)  # 4 mm hacia abajo sobre la cara 2
+        assert y == pytest.approx(4 * math.tan(math.radians(30)) / 3, abs=1e-3)  # sobre la tapa
