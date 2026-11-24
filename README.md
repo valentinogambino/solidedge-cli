@@ -668,7 +668,7 @@ traen `"marca_de_agua": "presente"` o `"ausente"` y una `nota`.
 | `igs` | `iges` | `.igs` (también `.iges`) | `part`, `sheetmetal`, `assembly` |
 | `pdf` | | `.pdf` | `draft` |
 | `dxf` | | `.dxf` | `draft` |
-| `png` | | `.png` | `part`, `sheetmetal`, `assembly`, `draft` (la ventana encuadrada con `Fit`, 1920x1080; un Draft puede salir con el rotulo recortado por la proporcion 16:9) |
+| `png` | | `.png` | `part`, `sheetmetal`, `assembly`, `draft` (la ventana encuadrada con `Fit`, 1920x1080; en un Draft el lado mayor es 1920 y el otro sigue la proporción de la hoja) |
 
 Los documentos síncronos (`syncpart`, ...) se tratan como su versión ordenada. Un formato que no
 encaja con el tipo del documento da exit 2 antes de escribir nada. Todo sale por `SaveCopyAs`
@@ -838,7 +838,7 @@ Validados el 2026-11-23 (croquis con arcos y relaciones 2D, el 2026-11-24) contr
 | relación entre dos ocurrencias fijas | `asm relate` | verificado: `AddPlanar` NO falla, devuelve una relación con `Status` solved y `DetailedStatus` 4 (`BetweenFixed`) sin mover nada; la CLI la borra y da exit 4 con la pista de `ground --release` |
 | `Relation.Type` (planar -2058948880, axial 1472929712, ground 1959028688), `Occurrence1`/`Occurrence2`, `DetailedStatus`, `Delete()` | `asm relations list\|delete` | verificado; la ground trae `Occurrence` (las otras `Occurrence1/2`); `Offset` solo existe en la planar; el MCP documenta mal los tipos ("Type = 2 Planar") |
 | STEP, STL, Parasolid, IGES, PDF, DXF | `doc.SaveCopyAs(ruta)`, el formato sale de la extensión | verificado en pieza, chapa, ensamble y Draft; STEP con cabecera ISO-10303-21, STL binario con 12 triángulos por cubo, `.x_t` con cabecera Parasolid, IGES con sección de inicio |
-| PNG | `View.SaveAsImage(ruta, 1920, 1080)` | verificado en pieza, chapa y ensamble (con `View.Fit()` antes); **corregido** en Draft: su `SheetWindow` no tiene `View`, `Fit` y `SaveAsImage` son de la ventana |
+| PNG | `View.SaveAsImage(ruta, 1920, 1080)` (Draft: alto o ancho según la hoja) | verificado en pieza, chapa y ensamble (con `View.Fit()` antes); **corregido** en Draft: su `SheetWindow` no tiene `View`, `Fit` y `SaveAsImage` son de la ventana |
 | Draft nuevo | `Documents.Add("SolidEdge.DraftDocument")` | verificado (hoja A2 por defecto) |
 | Hoja | `ActiveSheet.SheetSetup.SheetSizeOption = igIso<A>Wide` | verificado; **corregido**: además hay que reemplazar el fondo (`ActiveSheet.Background = Sections.BackgroundSection.Sheets.Item("A3-Sheet")`) o el marco y el rotulo salen recortados |
 | Enlace y vistas | `ModelLinks.Add(ruta)`; `DrawingViews.AddPartView`, `AddSheetMetalView`, `AddAssemblyView` con `(enlace, orientación, escala, x, y, 0)` | verificado: los tres existen y `x, y` es el centro de la vista; las vistas quedan dentro de la hoja y sin superponerse |
