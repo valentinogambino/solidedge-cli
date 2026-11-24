@@ -275,6 +275,49 @@ Todos modifican, aceptan `--doc` y siguen las reglas globales: `--readonly` los 
   exit 4): `posicion` y `rotacion` en metros y radianes, o en lo que pida `--units` (`mm,deg`); `fija`
   es si la ocurrencia tiene su relación ground.
 
+#### Relaciones 3D: `asm relate` y `asm relations list|delete`
+
+```powershell
+se --json edges list --doc caja.par         # índice de cada cara: en cada arista, `caras[].indice`
+se --json asm ground 2 --release            # las ocurrencias nacen fijas: soltá una antes
+se --json asm relate mate --a 1:3 --b 2:1 [--units mm] [--doc Conj.asm]
+# {"ok": true, "data": {"indice": 3, "tipo": "mate", "a": {"ocurrencia": 1, "cara": 3, "tipo_de_cara": "plano"}, "b": {"ocurrencia": 2, "cara": 1, "tipo_de_cara": "plano"}, "offset": 0.0, "estado": "resuelta", "ocurrencias": [{"indice": 1, ..., "fija": true, "posicion": [0.0, 0.0, 0.0]}, {"indice": 2, ..., "fija": false, "posicion": [0.05, 0.0, 0.0]}], "unidades": {"longitud": "m"}}, "error": null}
+se --json asm relate align --a caja.par:1:3 --b caja.par:2:3 --offset 5mm
+se --json asm relate axial --a 3:1 --b cil.par:2:1
+se --json asm relations list [--units mm]
+# {"ok": true, "data": {"cantidad": 2, "relaciones": [{"indice": 1, "tipo": "ground", "tipo_codigo": 1959028688, "ocurrencias": [{"indice": 1, "nombre": "caja.par:1"}], "offset": null, "estado": "resuelta", ...}, {"indice": 2, "tipo": "mate", ...}], "unidades": {"longitud": "m"}}, "error": null}
+se --json asm relations delete 2
+# {"ok": true, "data": {"indice": 2, "tipo": "mate", "ocurrencias": [...], "removed": true, "restantes": 1}, "error": null}
+```
+`relate`, `relations list` y `relations delete` aceptan `--doc` (solo ensambles; otro tipo, exit 2);
+`relate` y `delete` modifican, así que `--readonly` los bloquea (exit 6) y `--dry-run` informa el plan.
+
+- `<occ>:<cara>`: la ocurrencia (índice de `asm tree` o nombre, como en `ground|move|remove`) y el
+  **índice 1-based de la cara en el cuerpo de su pieza**, el mismo que `se edges list` informa en
+  `caras[].indice` con esa pieza abierta (`cantidad_caras` da el total). Se corta en el último `:`,
+  así que `caja.par:2:5` es la cara 5 de `caja.par:2`. Formato inválido, o misma ocurrencia en
+  `--a` y `--b`, exit 2; ocurrencia o cara inexistente, exit 5.
+- `mate`: caras planas enfrentadas (en contacto, normales opuestas). `align`: caras planas
+  alineadas (coplanares, misma normal). `axial`: ejes de dos caras cilíndricas coincidentes.
+  Una cara de tipo incompatible (curva en `mate`/`align`, no cilíndrica en `axial`) da exit 2 sin
+  tocar Solid Edge.
+- `--offset` (longitud; sin unidad, metros; admite negativos) solo vale para `mate` y `align`; con
+  `axial`, exit 2. El signo es el de Solid Edge: con `mate`, positivo separa las caras; con `align`,
+  `+5mm` deja la cara de `--b` a 5 mm de la de `--a` en el sentido de su normal.
+- **Las ocurrencias nacen fijas** y Solid Edge no rechaza la relación entre dos fijas: la crea sin
+  resolver (`DetailedStatus` entre fijas) y sin mover nada. `relate` lo detecta, borra la relación
+  y sale con exit 4 diciendo que hay que soltar una con `se asm ground <occ> --release`; no la
+  suelta solo. Toda relación que quede sin resolver o con un offset distinto del pedido se borra
+  igual (exit 4, `details.relacion_borrada`).
+- `data` de `relate`: `indice` y `tipo` de la relación, `a` y `b` (ocurrencia, cara y tipo de
+  cara), `offset`, `estado` y `ocurrencias` con la posición y rotación resultantes leídas de
+  Solid Edge (`--units mm,deg` para mostrarlas en otra unidad).
+- `relations list` da por relación `indice` (1-based, orden de `Relations3d`), `tipo` (`ground`,
+  `mate`, `align`, `axial` u `otro` con `tipo_codigo`), `ocurrencias` (con su `indice` de `asm
+  tree`), `offset` (solo planares) y `estado` (`resuelta`, `entre_fijas`, `insatisfecha`, ...). El
+  índice cambia al borrar o agregar relaciones, y soltar una ocurrencia borra su relación ground.
+  `relations delete` acepta cualquier relación (también una ground); índice inexistente, exit 5.
+
 ```powershell
 se --json features list
 # {"ok": true, "data": {"cantidad": 2, "operaciones": [{"indice": 1, "nombre": "ExtrudedProtrusion_1", "tipo": "ExtrudedProtrusion", "suprimida": false, "estado": "ok"}, {"indice": 2, "nombre": "ExtrudedCutout_1", "tipo": "ExtrudedCutout", "suprimida": true, "estado": "suppressed"}]}, "error": null}
@@ -690,6 +733,12 @@ Validados el 2026-11-23 contra Solid Edge 2026 Community Edition 226.00.01.04.
 | `Occurrence.Move(dx, dy, dz)` | `asm move --by` | verificado: suma a la posición sin tocar los ángulos |
 | `Relations3d`, `AddGround(occ)`, `Relation.Delete()` | `asm ground`, `asm ground --release` | verificado; **corregido**: la relación ground es de tipo `igGroundRelation3d` (1959028688), no `Type = 0` como dice el MCP; toda ocurrencia nace fija (una relación por ocurrencia, `Relation.Occurrence` apunta a ella); `AddGround` sobre una ya fija no duplica pero reordena las relaciones, por eso se mira antes; mover (`Move`, `PutTransform`) una ocurrencia fija funciona |
 | `Occurrence.Delete()` | `asm remove` | verificado: baja `Occurrences.Count`, se llevan las relaciones, el archivo queda |
+| `AssemblyDocument.CreateReference(occ, cara)` | `asm relate` | verificado: la cara sale de `OccurrenceDocument.Models.Item(1).Body.Faces(igQueryAll)` (mismo orden que `edges list`); `Relations3d.Add*` no acepta caras sueltas, solo estas referencias |
+| `Relations3d.AddPlanar(ref1, ref2, normalsAligned, punto1, punto2)` | `asm relate mate\|align` | verificado en cajas de 50x30x20 mm: **los dos puntos son obligatorios** (sin ellos, "Invalid number of parameters"); sirve `Face.Geometry.GetRootPoint([0,0,0])` (también el origen, no hace falta que caiga en la cara); `normalsAligned=True` es **mate** (caras en contacto) y `False` es **align**; la relación creada lee `NormalsAligned` al revés de lo pasado (mate lee False) |
+| `Relations3d.AddAxial(ref1, ref2, normalsAligned)` | `asm relate axial` | verificado con dos cilindros de 20 mm: quedan coaxiales con `True` o `False` (ejes paralelos); se usa `True`. El MCP dice que acepta ocurrencias: da E_FAIL, hacen falta referencias de cara |
+| `PlanarRelation3d.Offset` (escritura) | `asm relate --offset` | verificado: se escribe tras crear la relación y mueve la ocurrencia suelta (mate +5 mm: x=55 mm; align +5 mm: x=5 mm); el MCP dice que `AddPlanar` no admite offset, y es cierto, se pone después |
+| relación entre dos ocurrencias fijas | `asm relate` | verificado: `AddPlanar` NO falla, devuelve una relación con `Status` solved y `DetailedStatus` 4 (`BetweenFixed`) sin mover nada; la CLI la borra y da exit 4 con la pista de `ground --release` |
+| `Relation.Type` (planar -2058948880, axial 1472929712, ground 1959028688), `Occurrence1`/`Occurrence2`, `DetailedStatus`, `Delete()` | `asm relations list\|delete` | verificado; la ground trae `Occurrence` (las otras `Occurrence1/2`); `Offset` solo existe en la planar; el MCP documenta mal los tipos ("Type = 2 Planar") |
 | STEP, STL, Parasolid, IGES, PDF, DXF | `doc.SaveCopyAs(ruta)`, el formato sale de la extensión | verificado en pieza, chapa, ensamble y Draft; STEP con cabecera ISO-10303-21, STL binario con 12 triángulos por cubo, `.x_t` con cabecera Parasolid, IGES con sección de inicio |
 | PNG | `View.SaveAsImage(ruta, 1920, 1080)` | verificado en pieza, chapa y ensamble (con `View.Fit()` antes); **corregido** en Draft: su `SheetWindow` no tiene `View`, `Fit` y `SaveAsImage` son de la ventana |
 | Draft nuevo | `Documents.Add("SolidEdge.DraftDocument")` | verificado (hoja A2 por defecto) |
