@@ -72,6 +72,7 @@ ESCRITURAS = frozenset(
         "Variables.Add",
         "Variable.Value=",
         "Variable.Formula=",
+        "Feature.Suppress=",
         "Properties.Add",
         "Property.Value=",
         "ComputePhysicalPropertiesWithSpecifiedDensity",
@@ -650,6 +651,9 @@ class ModeloFalso:
     def __init__(self, doc: DocumentoFalso, features: list | None = None, caja=None) -> None:
         self.doc = doc
         self.Features = ColeccionFalsa(features)
+        for feature in features or []:
+            if hasattr(feature, "doc"):
+                feature.doc = doc
         self.Body = CuerpoFalso(caja)
 
     def ComputePhysicalPropertiesWithSpecifiedDensity(self, **kwargs: Any) -> tuple:
@@ -670,8 +674,23 @@ class FeatureFalsa:
     ) -> None:
         self.Name = nombre
         self.Type = tipo
-        self.Suppress = suprimida
+        self._suprimida = suprimida
         self.Status = estado
+        self.doc: DocumentoFalso | None = None
+        self.ignora_escritura = False  # simula un Solid Edge que no aplica `Suppress`
+
+    @property
+    def Suppress(self) -> bool:
+        return self._suprimida
+
+    @Suppress.setter
+    def Suppress(self, valor: bool) -> None:
+        if self.doc is not None:
+            self.doc.registro.append(("Feature.Suppress=", self.Name, valor))
+        if self.ignora_escritura:
+            return
+        self._suprimida = valor
+        self.Status = 1216476313 if valor else 1216476310
 
 
 class PlanoRefFalso:

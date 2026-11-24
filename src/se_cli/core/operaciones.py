@@ -12,6 +12,7 @@ from typing import Any
 
 from se_cli.core.acceso import exigir_tipo, items, leer, opcional
 from se_cli.core.constants import FeatureStatusConstants, FeatureTypeConstants
+from se_cli.core.errors import DocNoEncontrado, ErrorCom
 
 TIPOS_SOPORTADOS = ("part", "sheetmetal")
 
@@ -69,12 +70,58 @@ def _de_edgebar(doc: Any) -> list[Any]:
     return [f for f in items(coleccion) if opcional(lambda f=f: f.Suppress) is not None]
 
 
+def _todas(doc: Any) -> list[Any]:
+    return _de_modelos(doc) or _de_edgebar(doc)
+
+
 def listar(doc: Any) -> dict[str, Any]:
     """Operaciones en orden: `{indice (1-based), nombre, tipo, suprimida, estado}`."""
     exigir_tipo(doc, TIPOS_SOPORTADOS, "features list")
-    features = _de_modelos(doc) or _de_edgebar(doc)
-    lista = [_describir(i, f) for i, f in enumerate(features, start=1)]
+    lista = [_describir(i, f) for i, f in enumerate(_todas(doc), start=1)]
     return {"cantidad": len(lista), "operaciones": lista}
 
 
-__all__ = ["TIPOS_SOPORTADOS", "listar", "nombre_de_estado", "nombre_de_tipo"]
+def _buscar(features: list[Any], selector: str) -> tuple[int, Any]:
+    """Operación por índice (1-based, como `features list`) o nombre exacto; si no, exit 5."""
+    texto = selector.strip()
+    if texto.isdigit():
+        indice = int(texto)
+        if 1 <= indice <= len(features):
+            return indice, features[indice - 1]
+        raise DocNoEncontrado(
+            f"No existe la operación con índice {indice}: el documento tiene {len(features)}.",
+            details={"indice": indice, "cantidad": len(features)},
+        )
+    buscado = texto.casefold()
+    for indice, feature in enumerate(features, start=1):
+        if str(opcional(lambda feature=feature: feature.Name) or "").casefold() == buscado:
+            return indice, feature
+    raise DocNoEncontrado(
+        f"No existe la operación {selector!r} en el documento.", details={"nombre": selector}
+    )
+
+
+def cambiar_supresion(doc: Any, selector: str, suprimir: bool) -> dict[str, Any]:
+    """Suprimí o reactivá una operación. Devuelve su descripción y `changed`.
+
+    Idempotente: si ya está en el estado pedido no se escribe nada y `changed` es `false`.
+    Lo que se informa es lo que Solid Edge tiene después de escribir, no lo que se pidió.
+    """
+    comando = "features suppress" if suprimir else "features unsuppress"
+    exigir_tipo(doc, TIPOS_SOPORTADOS, comando)
+    indice, feature = _buscar(_todas(doc), selector)
+    antes = _describir(indice, feature)
+    if antes["suprimida"] is suprimir:
+        return {**antes, "changed": False}
+    leer(lambda: setattr(feature, "Suppress", suprimir))
+    despues = _describir(indice, feature)
+    if despues["suprimida"] is not suprimir:
+        raise ErrorCom(
+            f"Solid Edge no dejó {antes['nombre']!r} "
+            f"{'suprimida' if suprimir else 'activa'}: sigue en estado {despues['estado']}.",
+            details=despues,
+        )
+    return {**despues, "changed": True}
+
+
+__all__ = ["TIPOS_SOPORTADOS", "cambiar_supresion", "listar", "nombre_de_estado", "nombre_de_tipo"]
