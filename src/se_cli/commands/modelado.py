@@ -1,4 +1,4 @@
-"""Comandos de modelado: `se sketch rect|circle`, `se extrude`, `se revolve` y `se hole`."""
+"""Comandos de modelado: `se sketch rect|circle|profile`, `se extrude`, `se revolve` y `se hole`."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Annotated
 import typer
 
 from se_cli.commands._comun import DocOpcion, sin_dialogos
-from se_cli.core import acceso, modelado
+from se_cli.core import acceso, croquis, modelado
 from se_cli.ejecucion import ejecutar
 
 sketch = typer.Typer(
@@ -82,6 +82,37 @@ def circulo(
         ),
         modifica=True,
         plan=lambda: modelado.planificar_circulo(plane, radius, diameter, at),
+    )
+
+
+@sketch.command("profile")
+def perfil(
+    ctx: typer.Context,
+    source: Annotated[
+        str,
+        typer.Argument(
+            metavar="ARCHIVO.json|-",
+            help="Perfil declarativo en JSON (esquema v1, ver el README); `-` lee la entrada "
+            "estándar.",
+        ),
+    ],
+    doc: DocOpcion = None,
+) -> None:
+    """Creá un perfil cerrado de líneas, arcos y círculos con restricciones desde un JSON."""
+    leido: list[croquis.Perfil] = []
+
+    def cargar() -> croquis.Perfil:  # la entrada estándar se lee una sola vez
+        if not leido:
+            leido.append(croquis.cargar_perfil(source))
+        return leido[0]
+
+    ejecutar(
+        ctx,
+        lambda sesion: sin_dialogos(
+            sesion, lambda app: modelado.crear_perfil(acceso.documento(app, doc), cargar())
+        ),
+        modifica=True,
+        plan=lambda: modelado.planificar_perfil(cargar()),
     )
 
 

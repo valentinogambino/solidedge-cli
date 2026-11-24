@@ -371,6 +371,104 @@ centro del círculo; por defecto el origen. `Profile.End(igProfileClosed)` devue
 rectángulo de cuatro líneas aunque es válido (con un círculo da 0): se aceptan ambos y se informan
 en `codigo_end`; cualquier otro código es exit 4.
 
+### `se sketch profile`
+
+```powershell
+se --json sketch profile perfil.json [--doc <selector>]
+Get-Content perfil.json | se --json sketch profile -        # `-` lee la entrada estándar
+# {"ok": true, "data": {"perfil": 1, "plano": "top", "plano_indice": 1, "tipo": "perfil", "dimensiones_si": {"x_min": -0.01, "y_min": 0.0, "x_max": 0.06, "y_max": 0.02}, "valido": true, "codigo_end": 0, "entidades": {"lineas": 2, "arcos": 2, "circulos": 0}, "restricciones": {"aplicadas": 11, "por_tipo": {"connect": 4, "horizontal": 2, "tangent": 4, "equal": 1}}}, "error": null}
+```
+Crea un croquis cerrado de líneas, arcos y círculos con restricciones a partir de un perfil
+declarativo en JSON, **sin estado entre comandos** (no hay `sketch begin/end` ni atajos
+`sketch line|arc`: cada uno dejaría un perfil abierto inutilizable). El `data` es el de `sketch rect`
+(`perfil` se pasa a `extrude --profile` y `revolve --profile`) más `entidades` y `restricciones`
+(las realmente aplicadas, incluidas las uniones automáticas). Todo el JSON se valida **antes** de
+tocar Solid Edge; `--dry-run` hace solo eso y devuelve el plan en SI (entidades ya expandidas y
+restricciones).
+
+Esquema v1 (todo campo desconocido es exit 2):
+
+| campo | |
+|---|---|
+| `version` | obligatorio, `1` |
+| `plane` | `top` (por defecto), `front`, `right` o un índice de `RefPlanes`, como `sketch rect` |
+| `units` | unidad de longitud (`m`, `mm`, `cm`, `in`, `ft`) de los números sin unidad; obligatoria si hay alguno |
+| `tolerance` | número o string con unidad; por defecto 1e-6 m. Es la tolerancia de coincidencia, de radios y de cumplimiento de restricciones |
+| `auto_connect` | por defecto `true`: genera un `connect` por cada par de extremos que coinciden |
+| `close` | por defecto y solo `true` (los perfiles abiertos quedan fuera de v1) |
+| `entities` | lista no vacía de entidades |
+| `constraints` | lista opcional de restricciones |
+
+Coordenadas, largos y radios: un número (en `units`) o un string con unidad (`"50mm"`; el string sin
+unidad es exit 2). Un punto es `[x, y]` en el plano del perfil (como en `sketch rect`). Entidades,
+todas con un `id` único sin puntos:
+
+| `type` | campos | |
+|---|---|---|
+| `line` | `from`, `to` | |
+| `arc` | `center`, `start`, `end`, `dir` | `ccw` (por defecto) o `cw`: el sentido en que se recorre de `start` a `end`. Los radios a `start` y a `end` tienen que coincidir (dentro de `tolerance`) y `start` no puede ser igual a `end` (para una vuelta completa, `circle`) |
+| `circle` | `center`, `radius` | es un lazo por sí mismo |
+| `polyline` | `points` (al menos 2) | azúcar: se expande a las líneas `p1.1`, `p1.2`... (id de la polilínea, punto, número de segmento desde 1). Para cerrar una polilínea hay que repetir el primer punto al final |
+
+Restricciones. Referencias: `<id>` para una entidad (un segmento de polilínea es `p1.2`; la
+polilínea sola no se puede nombrar) y `<id>.<punto>` para un punto, con `start`/`end` en líneas y
+arcos, `center` en arcos y círculos (`"a1.start"`, `"p1.2.end"`).
+
+| `type` | campos | se aplica a |
+|---|---|---|
+| `connect` | `a`, `b` (puntos) | une dos puntos (`AddKeypoint`) |
+| `horizontal`, `vertical` | `on` | una línea |
+| `parallel`, `perpendicular` | `a`, `b` | dos líneas |
+| `equal` | `a`, `b` | dos líneas (largo) o dos arcos/círculos (radio) |
+| `concentric` | `a`, `b` | arcos o círculos |
+| `tangent` | `a`, `b` | línea con arco o círculo, o dos arcos/círculos entre sí |
+
+Las restricciones **solo fijan intención**: las coordenadas ya tienen que cumplirlas dentro de
+`tolerance`. Si no (o si el tipo no corresponde, o `horizontal` va sobre un arco), es exit 2 sin
+tocar Solid Edge; el solver de Solid Edge, si no, movería la geometría. Primero se aplican las
+uniones y después el resto en el orden del JSON. Fuera de v1 (exit 2): cotas, perfiles abiertos,
+`collinear` y `symmetric`.
+
+Con `close: true`, antes de tocar Solid Edge se verifica que líneas y arcos formen lazos
+cerrados (cada vértice con exactamente dos extremos; uno solo es un contorno abierto y tres o más,
+un contorno ramificado). Los círculos son lazos propios, así que un círculo dentro de un contorno
+es un agujero.
+
+Ejemplo completo (ranura de 50 x 20 mm con extremos redondos: el arco derecho `ccw` y el izquierdo
+`cw`, todo tangente; extruida 10 mm da 13141.593 mm3 = (50 x 20 + pi x 10^2) x 10):
+
+```json
+{"version": 1, "plane": "top", "units": "mm", "tolerance": 0.001, "auto_connect": true, "close": true,
+ "entities": [
+   {"id": "l1", "type": "line", "from": [0, 0], "to": [50, 0]},
+   {"id": "a1", "type": "arc", "center": [50, 10], "start": [50, 0], "end": [50, 20], "dir": "ccw"},
+   {"id": "l2", "type": "line", "from": [50, 20], "to": [0, 20]},
+   {"id": "a2", "type": "arc", "center": [0, 10], "start": [0, 0], "end": [0, 20], "dir": "cw"}
+ ],
+ "constraints": [
+   {"type": "horizontal", "on": "l1"}, {"type": "horizontal", "on": "l2"},
+   {"type": "tangent", "a": "l1", "b": "a1"}, {"type": "tangent", "a": "a1", "b": "l2"},
+   {"type": "tangent", "a": "l2", "b": "a2"}, {"type": "tangent", "a": "a2", "b": "l1"},
+   {"type": "equal", "a": "a1", "b": "a2"}
+ ]}
+```
+
+Errores: JSON inválido, campos desconocidos, ids duplicados, tipos o referencias inexistentes, arco
+con radios distintos, coordenadas que no cumplen una restricción o contorno no cerrado, todo exit 2
+(y Solid Edge intacto); archivo inexistente, exit 5; `--readonly`, exit 6. **Fallo a mitad** (Solid
+Edge rechaza una entidad o una relación, o el cierre): se borra el perfil creado
+(`ProfileSet.Delete`) y sale exit 4 con la etapa en `error.details`, p. ej.
+`{"etapa": "restricciones", "restriccion": 12, "tipo": "horizontal", "perfil_borrado": true}`
+(etapas: `perfil`, `entidades`, `restricciones`, `cierre`). Solid Edge rechaza, por ejemplo, la misma
+restricción repetida.
+
+Notas de Solid Edge (verificadas en vivo): el perfil se cierra con `Profile.End(igProfileClosed |
+igProfileAllowNested)` (8193). Sin `AllowNested` un lazo dentro de otro da -113 y no extruye. Aun
+así, para que un perfil con un lazo adentro de otro (una placa con un círculo) extruya hace falta
+que sus extremos estén unidos por relaciones: **con `auto_connect: false` y un círculo adentro, el
+perfil cierra pero `extrude` no crea nada** (Solid Edge no da error). `codigo_end` es 0 con los
+extremos unidos y -103 sin unir.
+
 ### `se extrude`
 
 ```powershell
@@ -713,7 +811,7 @@ volumen de la chapa (7.9356e-6 m3) dentro del 1 %.
 
 ### Supuestos de la API (verificados en vivo)
 
-Validados el 2026-11-23 contra Solid Edge 2026 Community Edition 226.00.01.04.
+Validados el 2026-11-23 (croquis con arcos y relaciones 2D, el 2026-11-24) contra Solid Edge 2026 Community Edition 226.00.01.04.
 
 | qué | llamada | resultado |
 |---|---|---|
@@ -752,6 +850,11 @@ Validados el 2026-11-23 contra Solid Edge 2026 Community Edition 226.00.01.04.
 | `connect --launch` | `Dispatch("SolidEdge.Application")` | verificado: arranca **oculta** (`Visible=False`) y sigue viva al terminar `se`; se le pone `Visible=True` |
 | Planos de la plantilla Part | `RefPlanes.Item(1..3)` | verificado: 1 = top (XY, +Z), 2 = right (YZ, +X), 3 = front (XZ, -Y) |
 | Perfil | `ProfileSets.Add()`, `Profiles.Add(plano)`, `Lines2d.AddBy2Points`, `Circles2d.AddByCenterRadius`, `End(igProfileClosed)` | verificado: `End` da -103 con un rectángulo y 0 con un círculo; el perfil sigue en `ProfileSets` y es reutilizable |
+| Arco de un perfil | `Arcs2d.AddByCenterStartEnd(cx, cy, sx, sy, ex, ey)` | verificado midiendo `StartAngle`/`SweepAngle`: **siempre antihorario de start a end** (centro (0,0), start (10,0), end (0,10) mm: barrido 90°; start (0,20), end (20,0): 270°). Un arco `cw` se crea con start y end intercambiados; el volumen de una ranura con un arco `ccw` y otro `cw` coincide con el analítico |
+| Keypoints para `Relations2d.AddKeypoint(obj1, kp1, obj2, kp2)` | línea: 0 = inicio, 1 = fin, 2 = medio; arco: 0 = centro, 1 = inicio, 2 = fin, 3 = medio; círculo: 0 = centro | verificado moviendo la geometría que el solver desplaza al unir dos puntos que no coinciden; **corregido**: el typelib (centro 0, inicio 1, fin 2) acierta y el MCP (arco 0 = inicio, 1 = fin, 2 = medio) no. Un keypoint 3 en una línea da E_FAIL. En un arco `cw` el `start` del JSON es el keypoint 2 (fin real) y el `end` el 1 |
+| Relaciones 2D | `Relations2d.AddHorizontal(l)`, `AddVertical(l)`, `AddParallel(a, b)`, `AddPerpendicular(a, b)`, `AddEqual(a, b)`, `AddConcentric(a, b)`, `AddTangent(a, b)` | verificado: reciben solo los objetos (sin puntos ni keypoints) y el orden de `a`/`b` no importa (tangentes línea-arco y arco-línea en una ranura); `AddEqual` sirve entre líneas, arcos y círculos (radio). **Si la geometría no cumple la relación el solver la mueve en silencio** (un `AddKeypoint` entre puntos lejanos arrastra la línea; un `AddConcentric` mueve el arco): por eso `sketch profile` exige antes que las coordenadas ya la cumplan. `AddHorizontal` sobre un arco da E_FAIL, y repetir una relación ya creada también (`0x80020009`) |
+| Borrar un perfil | `ProfileSet.Delete()` | verificado: borra el perfil **antes de `End`**, **después de un `End` bueno** y **después de un `End` que devolvió -103** (perfil abierto): baja `ProfileSets.Count`; sirve de limpieza ante un fallo a mitad de `sketch profile` (verificado también con una relación que Solid Edge rechazó) |
+| Cierre con lazos anidados | `Profile.End(igProfileClosed \| 8192)` | verificado: `igProfileAllowNested` (8192) no está en el typelib; sin él un círculo dentro de un contorno da -113 y `AddFiniteExtrudedProtrusion` no crea nada (sin error). Con 8193 y los extremos unidos por `AddKeypoint` da 0 y extruye con el agujero (volumen exacto); con los extremos sin unir da -103 y tampoco extruye. `End` también devuelve -103 con un contorno abierto, así que el cierre se valida en la CLI |
 | Extrusión | `Models.AddFiniteExtrudedProtrusion` (primera), `ExtrudedProtrusions.AddFiniteMulti` (siguientes) | verificado, incluido `symmetric` (la distancia es el total) |
 | Cortes y agujeros | `ExtrudedCutouts.AddFiniteMulti`, `AddThroughAllMulti` | verificado; un corte que no toca material **no da error** (se detecta con `Body.Volume`); `AddThroughAllMulti` con `igSymmetric` no corta; se deshace con `Feature.Delete` |
 | Revolución | `Models.AddFiniteRevolvedProtrusion`, `RevolvedProtrusions.AddFiniteMulti`, `Profile.SetAxisOfRevolution` | verificado (volumen de un tubo exacto); el eje se puede agregar con el perfil ya cerrado |
