@@ -13,16 +13,18 @@ Todo en SI en la API (kg, m, m², m³, kg/m³, kg·m²). Verificado en vivo (Sol
   `ComputePhysicalPropertiesWithSpecifiedDensity`); la masa sale de los materiales de las piezas
   con `PhysicalProperties.GetAssemblyPhysicalProperties`, tras `Update()` si está desactualizado.
   Un ensamble no informa el área (la API devuelve -1). Las piezas sin material cuentan con
-  densidad 1 kg/m3, aunque se les haya calculado la masa con una densidad.
+  densidad 1 kg/m3, aunque se les haya calculado la masa con una densidad; `piezas_sin_material`
+  las lista (por la tabla de materiales de la aplicación).
 """
 
 from __future__ import annotations
 
 import math
+import os
 from typing import Any
 
-from se_cli.core import unidades
-from se_cli.core.acceso import exigir_tipo, leer
+from se_cli.core import ensamble, unidades
+from se_cli.core.acceso import exigir_tipo, leer, opcional
 from se_cli.core.errors import ArgumentoInvalido, ErrorCom, NoSoportado
 
 TIPOS_SOPORTADOS = ("part", "sheetmetal", "assembly")
@@ -206,14 +208,48 @@ def _convertir(si: dict[str, Any], elegidas: dict[str, str]) -> dict[str, Any]:
     return convertido
 
 
+def piezas_sin_material(app: Any, doc: Any) -> list[dict[str, Any]] | None:
+    """Piezas del ensamble sin material, por archivo y con su cantidad de ocurrencias.
+
+    Pregunta `Application.GetMaterialTable().GetCurrentMaterialName(<doc de la pieza>)` (como el
+    MCP; no verificado en vivo): una cadena vacía es "sin material". Devuelve None si no se pudo
+    consultar la tabla de materiales. Una pieza que no se puede abrir o leer no se cuenta.
+    """
+    tabla = opcional(lambda: app.GetMaterialTable())
+    if tabla is None:
+        return None
+    sin_material: dict[str, dict[str, Any]] = {}
+    todas = opcional(lambda: ensamble.piezas(doc))
+    if todas is None:
+        return None
+    for archivo, ocurrencia in todas:
+        pieza = opcional(lambda o=ocurrencia: o.OccurrenceDocument)
+        if pieza is None:
+            continue
+        nombre = opcional(lambda p=pieza: tabla.GetCurrentMaterialName(p))
+        if nombre is None or str(nombre).strip():
+            continue
+        fila = sin_material.setdefault(
+            os.path.normcase(archivo), {"archivo": archivo, "cantidad": 0}
+        )
+        fila["cantidad"] += 1
+    return list(sin_material.values())
+
+
 def propiedades(
-    doc: Any, densidad: float | None = None, elegidas: dict[str, str] | None = None
+    doc: Any,
+    densidad: float | None = None,
+    elegidas: dict[str, str] | None = None,
+    app: Any = None,
 ) -> dict[str, Any]:
     """Propiedades físicas del documento.
 
     `actualizado` dice si se recalcularon en esta llamada (con `densidad` en pieza y chapa, que
     modifica el documento; o el `Update()` de un ensamble desactualizado) o se leyó el último
     cálculo (`False`, solo lectura).
+
+    Un ensamble con `app` suma `piezas_sin_material` (lista, o None si no se pudo consultar) y,
+    si hay, una `advertencia`: no cambia la masa ni el exit code.
     """
     tipo = exigir_tipo(doc, TIPOS_SOPORTADOS, "mass")
     actualizado = densidad is not None
@@ -257,11 +293,20 @@ def propiedades(
         "ejes_principales",
         "radios_de_giro",
     )
-    return {
+    data = {
         **{clave: convertido[clave] for clave in claves},
         "actualizado": actualizado,
         "unidades": convertido["unidades"],
     }
+    if tipo == "assembly" and app is not None:
+        sin_material = piezas_sin_material(app, doc)
+        data["piezas_sin_material"] = sin_material
+        if sin_material:
+            data["advertencia"] = (
+                f"{len(sin_material)} pieza(s) del ensamble no tienen material y cuentan con "
+                "densidad 1 kg/m3: la masa no es la real. Asignales un material."
+            )
+    return data
 
 
 __all__ = ["PRECISION", "TIPOS_SOPORTADOS", "propiedades", "validar_densidad"]

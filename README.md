@@ -218,8 +218,9 @@ sin densidad después de guardar el documento. `GetUserPhysicalProperties` solo 
 cargados a mano y no sirve. En un **ensamble** no existe cálculo con densidad (`--density` da exit
 6, `no_soportado`): la masa sale de los materiales de las piezas con
 `PhysicalProperties.GetAssemblyPhysicalProperties` (corre `Update()` si está desactualizado, y
-entonces `actualizado: true`); una pieza sin material cuenta con densidad 1 kg/m3 y el ensamble no
-informa el área (`area: null`). Verificado: cubo de 50 mm a 7850 kg/m3 da volumen 1.25e-4 m3, área
+entonces `actualizado: true`); una pieza sin material cuenta con densidad 1 kg/m3 (`data.piezas_sin_material` las lista por
+archivo con su cantidad, y `data.advertencia` avisa; la masa y el exit code no cambian) y el
+ensamble no informa el área (`area: null`). Verificado: cubo de 50 mm a 7850 kg/m3 da volumen 1.25e-4 m3, área
 0.015 m2 y masa 0.98125 kg.
 
 ### Ensambles y operaciones

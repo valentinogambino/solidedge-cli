@@ -131,6 +131,31 @@ def arbol(
     return {"documento": nombre, "profundidad": profundidad, "arbol": nodos}
 
 
+def piezas(doc: Any) -> list[tuple[str, Any]]:
+    """`(archivo, ocurrencia)` de cada pieza del ensamble, bajando por los subensambles.
+
+    Una ocurrencia por cada instancia (no se agrupa); los ciclos se cortan.
+    """
+    exigir_tipo(doc, ("assembly",), "asm")
+    nombre = str(leer(lambda: doc.Name))
+    raiz = os.path.normcase(str(opcional(lambda: doc.FullName) or nombre))
+    encontradas: list[tuple[str, Any]] = []
+
+    def recorrer(coleccion: Any, ancestros: tuple[str, ...]) -> None:
+        for ocurrencia in items(coleccion):
+            archivo = str(opcional(lambda o=ocurrencia: o.OccurrenceFileName) or "")
+            if not opcional(lambda o=ocurrencia: o.Subassembly):
+                encontradas.append((archivo, ocurrencia))
+                continue
+            clave = os.path.normcase(archivo)
+            hijos = _coleccion_de_hijos(ocurrencia)
+            if hijos is not None and clave not in ancestros:
+                recorrer(hijos, (*ancestros, clave))
+
+    recorrer(leer(lambda: doc.Occurrences), (raiz,))
+    return encontradas
+
+
 # --- Armado: add, ground, move, remove --------------------------------------------------------
 
 EXTENSIONES_INSERTABLES = (".par", ".psm", ".asm", ".pwd")
@@ -438,6 +463,7 @@ __all__ = [
     "fijar",
     "mover",
     "parsear_terna",
+    "piezas",
     "planificar_add",
     "planificar_ground",
     "planificar_move",
