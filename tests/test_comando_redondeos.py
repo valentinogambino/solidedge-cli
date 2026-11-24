@@ -440,3 +440,10 @@ def test_comandos_de_aristas_sin_instancia_dan_exit_3(cli_sin_instancia):
     ):
         r, sobre = cli_sin_instancia(*comando)
         assert r.exit_code == 3 and sobre["error"]["code"] == "no_conectado"
+
+
+def test_salida_humana_sin_json(cli, caja):
+    for comando in (["edges", "list"], ["round", "2mm", "--edges", "1"]):
+        r, _ = cli(*comando, como_json=False)
+        assert r.exit_code == 0, r.output
+        assert r.stdout.strip()
