@@ -714,11 +714,141 @@ class OcurrenciaFalsa:
         caja=None,
     ) -> None:
         self.caja = caja
+        self.pose: list[float] | None = [0.0] * 6
+        self.ignora_escritura = False  # simula un Solid Edge que no aplica la escritura
+        self.coleccion: OcurrenciasFalsas | None = None
         self.Name = nombre
         self.OccurrenceFileName = archivo
         self.Visible = visible
         self.Subassembly = bool(hijos)
         self.SubOccurrences = ColeccionFalsa(hijos)
+
+
+ESCRITURAS = ESCRITURAS | {
+    "Occurrences.AddByFilename",
+    "Occurrences.AddWithTransform",
+    "Occurrence.Move",
+    "Occurrence.PutTransform",
+    "Occurrence.Delete",
+    "Relations3d.AddGround",
+    "Relation3d.Delete",
+}
+
+RELACION_FIJA = 1959028688  # igGroundRelation3d
+
+
+class RelacionFalsa:
+    def __init__(self, relaciones: RelacionesFalsas, ocurrencia: OcurrenciaFalsa) -> None:
+        self.relaciones = relaciones
+        self.Type = RELACION_FIJA
+        self.Occurrence = ocurrencia
+
+    def Delete(self) -> None:
+        self.relaciones.doc.registro.append(("Relation3d.Delete", self.Occurrence.Name))
+        if self.relaciones.ignora_borrado:
+            return
+        self.relaciones.elementos.remove(self)
+
+
+class RelacionesFalsas(ColeccionFalsa):
+    """`Relations3d` de un ensamble: solo relaciones de tipo fijo (ground)."""
+
+    def __init__(self, doc: DocumentoFalso) -> None:
+        super().__init__([])
+        self.doc = doc
+        self.ignora_escritura = False  # simula un Solid Edge que no crea la relación
+        self.ignora_borrado = False
+
+    def AddGround(self, ocurrencia: OcurrenciaFalsa) -> RelacionFalsa:
+        self.doc.registro.append(("Relations3d.AddGround", ocurrencia.Name))
+        relacion = RelacionFalsa(self, ocurrencia)
+        if not self.ignora_escritura:
+            self.elementos.append(relacion)
+        return relacion
+
+
+class OcurrenciasFalsas(ColeccionFalsa):
+    """`Occurrences` de un ensamble armable: insertar, mover y borrar como en Solid Edge.
+
+    Como en Solid Edge 2026 CE, cada ocurrencia insertada nace con su relación fija.
+    """
+
+    def __init__(self, doc: DocumentoFalso, elementos: list | None = None) -> None:
+        super().__init__(elementos)
+        self.doc = doc
+        self.ignora_alta = False  # simula un Solid Edge que no agrega la ocurrencia
+        for ocurrencia in self.elementos:
+            ocurrencia.coleccion = self
+
+    def _alta(self, ruta: str, pose: list[float]) -> OcurrenciaFalsa:
+        base = os.path.basename(ruta)
+        usados = [o.Name for o in self.elementos]
+        n = 1
+        while f"{base}:{n}" in usados:
+            n += 1
+        ocurrencia = OcurrenciaFalsa(f"{base}:{n}", ruta)
+        ocurrencia.pose = pose
+        ocurrencia.coleccion = self
+        if not self.ignora_alta:
+            self.elementos.append(ocurrencia)
+            relaciones = getattr(self.doc, "Relations3d", None)
+            if isinstance(relaciones, RelacionesFalsas):
+                relaciones.elementos.append(RelacionFalsa(relaciones, ocurrencia))
+        return ocurrencia
+
+    def AddByFilename(self, ruta: str) -> OcurrenciaFalsa:
+        self.doc.registro.append(("Occurrences.AddByFilename", ruta))
+        return self._alta(ruta, [0.0] * 6)
+
+    def AddWithTransform(self, ruta: str, x, y, z, rx, ry, rz) -> OcurrenciaFalsa:
+        self.doc.registro.append(("Occurrences.AddWithTransform", ruta, x, y, z, rx, ry, rz))
+        return self._alta(ruta, [x, y, z, rx, ry, rz])
+
+
+def _get_transform(self):
+    if self.pose is None:
+        raise com_error(0x80004005, "Error no especificado")
+    return tuple(self.pose)
+
+
+def _put_transform(self, x, y, z, rx, ry, rz):
+    self.coleccion.doc.registro.append(("Occurrence.PutTransform", self.Name, x, y, z, rx, ry, rz))
+    if not self.ignora_escritura:
+        self.pose = [x, y, z, rx, ry, rz]
+
+
+def _move(self, dx, dy, dz):
+    self.coleccion.doc.registro.append(("Occurrence.Move", self.Name, dx, dy, dz))
+    if not self.ignora_escritura:
+        self.pose[0] += dx
+        self.pose[1] += dy
+        self.pose[2] += dz
+
+
+def _delete(self):
+    doc = self.coleccion.doc
+    doc.registro.append(("Occurrence.Delete", self.Name))
+    if self.ignora_escritura:
+        return
+    self.coleccion.elementos.remove(self)
+    relaciones = getattr(doc, "Relations3d", None)
+    if isinstance(relaciones, RelacionesFalsas):
+        relaciones.elementos[:] = [r for r in relaciones.elementos if r.Occurrence is not self]
+
+
+OcurrenciaFalsa.GetTransform = _get_transform
+OcurrenciaFalsa.PutTransform = _put_transform
+OcurrenciaFalsa.Move = _move
+OcurrenciaFalsa.Delete = _delete
+
+
+def con_armado(doc: DocumentoFalso, ocurrencias: list[OcurrenciaFalsa] | None = None):
+    """Prepará un ensamble para `asm add|ground|move|remove`; `ocurrencias` nacen fijas."""
+    doc.Relations3d = RelacionesFalsas(doc)
+    doc.Occurrences = OcurrenciasFalsas(doc, ocurrencias)
+    for ocurrencia in doc.Occurrences.elementos:
+        doc.Relations3d.elementos.append(RelacionFalsa(doc.Relations3d, ocurrencia))
+    return doc
 
 
 TIPO_POR_EXTENSION = {"par": 1, "dft": 2, "asm": 3, "psm": 4}
