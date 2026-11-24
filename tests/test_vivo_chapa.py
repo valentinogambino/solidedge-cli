@@ -87,3 +87,51 @@ def test_flat_dxf_create_de_una_chapa_con_un_doblez(tmp_path):
         assert len(activo) == 1 and activo[0]["activo"] is True
     finally:
         _correr("docs", "close", str(chapa), "--discard")
+
+
+SCRIPT_TAB_ORDENADA = """
+def main(app, args):
+    doc = app.Documents.Add("SolidEdge.SheetMetalDocument")
+    perfil = doc.ProfileSets.Add().Profiles.Add(doc.RefPlanes.Item(1))
+    puntos = [(0, 0), (0.1, 0), (0.1, 0.05), (0, 0.05)]
+    for a, b in zip(puntos, puntos[1:] + puntos[:1]):
+        perfil.Lines2d.AddBy2Points(*a, *b)
+    perfil.End(1)
+    doc.Models.AddBaseTab(perfil, 2)
+    doc.SaveAs(args[0])
+    return {"modo": doc.ModelingMode}
+"""
+
+
+def _cerrar(nombre: str) -> None:
+    _correr("docs", "close", nombre, "--discard")
+
+
+@pytest.mark.live
+def test_suppress_en_chapa_ordenada_funciona_y_en_sincronica_da_exit_6(tmp_path):
+    ordenada, sincronica = tmp_path / "ordenada.psm", tmp_path / "sincronica.psm"
+    for nombre, codigo, destino in (
+        ("ordenada.py", SCRIPT_TAB_ORDENADA, ordenada),
+        ("sincronica.py", SCRIPT, sincronica),
+    ):
+        (tmp_path / nombre).write_text(codigo, encoding="utf-8")
+        r, sobre = _correr("run", str(tmp_path / nombre), "--allow-scripts", "--", str(destino))
+        assert r.exit_code == 0, sobre
+    try:
+        # Modo ordenado: se suprime el Tab y la masa pasa a 0; se reactiva y vuelve.
+        d = ["--doc", ordenada.name]
+        r, sobre = _correr("features", "suppress", "Tab_1", *d)
+        assert r.exit_code == 0 and sobre["data"]["suprimida"] is True, sobre
+        assert _correr("mass", "--density", "7850", *d)[1]["data"]["volumen"] == 0
+        r, sobre = _correr("features", "unsuppress", "Tab_1", *d)
+        assert r.exit_code == 0 and sobre["data"]["suprimida"] is False, sobre
+        volumen = _correr("mass", "--density", "7850", *d)[1]["data"]["volumen"]
+        assert volumen == pytest.approx(100e-3 * 50e-3 * 1e-3, rel=1e-6)
+
+        # Modo sincrónico: Solid Edge rechaza `Suppress` con un error genérico.
+        r, sobre = _correr("features", "suppress", "Flange_1", "--doc", sincronica.name)
+        assert r.exit_code == 6 and sobre["error"]["code"] == "no_soportado", sobre
+        assert sobre["error"]["details"]["modo"] == "sincronico"
+    finally:
+        _cerrar(ordenada.name)
+        _cerrar(sincronica.name)

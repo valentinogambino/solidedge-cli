@@ -678,6 +678,7 @@ class FeatureFalsa:
         self.Status = estado
         self.doc: DocumentoFalso | None = None
         self.ignora_escritura = False  # simula un Solid Edge que no aplica `Suppress`
+        self.falla_escritura = False  # simula el error COM genérico de `Suppress` en sincrónico
 
     @property
     def Suppress(self) -> bool:
@@ -687,6 +688,8 @@ class FeatureFalsa:
     def Suppress(self, valor: bool) -> None:
         if self.doc is not None:
             self.doc.registro.append(("Feature.Suppress=", self.Name, valor))
+        if self.falla_escritura:
+            raise com_error(0x80020009, "Exception occurred.")
         if self.ignora_escritura:
             return
         self._suprimida = valor

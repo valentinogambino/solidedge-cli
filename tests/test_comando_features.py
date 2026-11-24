@@ -194,6 +194,27 @@ def test_suppress_en_modo_sincronico_usa_el_pathfinder(cli, app_falsa):
     assert feature.Suppress is True
 
 
+@pytest.mark.parametrize("accion", ["suppress", "unsuppress"])
+def test_chapa_sincronica_con_error_com_da_exit_6(cli, app_falsa, accion):
+    """Verificado en vivo: `Suppress` en una chapa sincrónica falla con 0x80020009."""
+    feature = FeatureFalsa("Tab_1", 123, suprimida=accion == "unsuppress")
+    feature.falla_escritura = True
+    doc = _pieza(app_falsa, [feature], tipo=4, nombre="Chapa.psm")
+    doc.ModelingMode = 1
+    r, sobre = cli("features", accion, "Tab_1")
+    assert r.exit_code == 6 and sobre["error"]["code"] == "no_soportado"
+    assert sobre["error"]["details"] == {"modo": "sincronico", "operacion": "Tab_1"}
+
+
+def test_error_com_en_modo_ordenado_sigue_siendo_exit_4(cli, app_falsa):
+    feature = FeatureFalsa("Tab_1", 123)
+    feature.falla_escritura = True
+    doc = _pieza(app_falsa, [feature], tipo=4, nombre="Chapa.psm")
+    doc.ModelingMode = 2
+    r, sobre = cli("features", "suppress", "Tab_1")
+    assert r.exit_code == 4 and sobre["error"]["code"] == "com_error"
+
+
 def test_si_solid_edge_no_aplica_la_escritura_da_exit_4(cli, app_falsa):
     feature = FeatureFalsa("ExtrudedProtrusion_1", EXTRUSION)
     feature.ignora_escritura = True
