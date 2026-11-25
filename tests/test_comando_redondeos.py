@@ -143,7 +143,7 @@ def test_comandos_de_aristas_en_un_draft_o_ensamble_dan_exit_2(cli, app_falsa, c
 def test_chapa_tambien_se_acepta(cli, app_falsa):
     chapa = con_modelado(app_falsa.agregar_documento("C.psm", tipo=4))
     cli("sketch", "rect", "--width", "50mm", "--height", "30mm")
-    cli("extrude", "20mm")
+    assert cli("sheetmetal", "tab")[0].exit_code == 0
     r, sobre = cli("edges", "list")
     assert r.exit_code == 0 and sobre["data"]["cantidad"] == 12
     r, sobre = cli("round", "1mm", "--edges", "1")

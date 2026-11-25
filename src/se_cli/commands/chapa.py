@@ -1,4 +1,4 @@
-"""Comandos de chapa metálica: `se sheetmetal flat-dxf`."""
+"""Comandos de chapa metálica: `se sheetmetal flat-dxf` y `se sheetmetal tab`."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Annotated
 import typer
 
 from se_cli.commands._comun import DocOpcion, sin_dialogos
-from se_cli.core import chapa
+from se_cli.core import acceso, chapa, modelado
 from se_cli.ejecucion import ejecutar
 
 app = typer.Typer(help="Chapa metálica.", no_args_is_help=True)
@@ -52,4 +52,35 @@ def desarrollo_dxf(
         ),
         modifica=True,
         plan=lambda: chapa.planificar(archivo, doc, out, overwrite, create),
+    )
+
+
+@app.command("tab")
+def tab(
+    ctx: typer.Context,
+    profile: Annotated[
+        str | None,
+        typer.Option(
+            "--profile",
+            help="Perfil devuelto por `se sketch` (ej. 2). Por defecto, el último del documento.",
+        ),
+    ] = None,
+    direction: Annotated[
+        str, typer.Option("--direction", help="normal o reverse (lado del plano del perfil).")
+    ] = "normal",
+    doc: DocOpcion = None,
+) -> None:
+    """Creá la base de una chapa (Tab) desde un perfil cerrado, con el espesor del material.
+
+    Solo en una chapa en modo ordenado y sin modelo base (si ya tiene, exit 2). Es la base que
+    `sheetmetal flat-dxf --create` puede desarrollar; `se extrude` no crea la base de una chapa.
+    """
+    ejecutar(
+        ctx,
+        lambda sesion: sin_dialogos(
+            sesion,
+            lambda a: modelado.crear_tab(acceso.documento(a, doc), profile, direction),
+        ),
+        modifica=True,
+        plan=lambda: modelado.planificar_tab(profile, direction),
     )

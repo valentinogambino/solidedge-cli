@@ -1625,6 +1625,10 @@ class ModeloParteFalso:
         return sum(op.delta for op in self.Features.elementos)
 
 
+ESPESOR_DE_CHAPA = 0.001
+ESCRITURAS = ESCRITURAS | {"Models.AddBaseTab"}
+
+
 class ModelosDeParteFalsos(ColeccionFalsa):
     """`Models` de una pieza ordenada: la primera operacion crea el modelo."""
 
@@ -1637,6 +1641,16 @@ class ModelosDeParteFalsos(ColeccionFalsa):
         self.doc._tocar("AddFiniteExtrudedProtrusion")
         modelo = ModeloParteFalso(self.doc, espesor=distancia)
         modelo.ExtrudedProtrusions.agregar(perfiles[0].area() * distancia)
+        self.elementos.append(modelo)
+        return modelo
+
+    def AddBaseTab(self, perfil, lado):
+        """Base de chapa: espesor del material (1 mm, como la plantilla por defecto)."""
+        self.doc.registro.append(("Models.AddBaseTab", lado))
+        self.doc._tocar("AddBaseTab")
+        modelo = ModeloParteFalso(self.doc, espesor=ESPESOR_DE_CHAPA)
+        modelo.Tabs = OperacionesFalsas(self.doc, "Tab", 1, modelo)
+        modelo.Tabs.agregar(perfil.area() * ESPESOR_DE_CHAPA)
         self.elementos.append(modelo)
         return modelo
 

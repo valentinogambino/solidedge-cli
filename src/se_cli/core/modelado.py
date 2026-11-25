@@ -29,7 +29,14 @@ from typing import Any
 from se_cli.core import croquis, unidades
 from se_cli.core.acceso import exigir_tipo, leer, opcional
 from se_cli.core.constants import valor as constante
-from se_cli.core.errors import ArgumentoInvalido, DocNoEncontrado, ErrorCom, SeError, traducir
+from se_cli.core.errors import (
+    ArgumentoInvalido,
+    DocNoEncontrado,
+    ErrorCom,
+    NoSoportado,
+    SeError,
+    traducir,
+)
 
 TIPOS_MODELABLES = ("part", "sheetmetal")
 
@@ -504,7 +511,9 @@ def extruir(
 ) -> dict[str, Any]:
     """Protrusión finita (o corte con `corte`) de un perfil."""
     datos = planificar_extrusion(distancia, perfil, direccion, corte)
-    exigir_modelable(doc, "extrude")
+    tipo = exigir_modelable(doc, "extrude")
+    if not corte:
+        _exigir_base_de_chapa(doc, tipo, "extrude")
     dist, lado = datos["distancia_si"], _lado(datos["direccion"])
     indice, objeto = resolver_perfil(doc, datos["perfil"])
     modelo = _modelo(doc)
@@ -553,6 +562,77 @@ def extruir(
     }
 
 
+# --- Chapa: la base es un Tab -----------------------------------------------------------------
+
+PISTA_TAB = (
+    "Creá la base de la chapa con `se sheetmetal tab` sobre el perfil (por ejemplo, "
+    "`se sketch rect` y después `se sheetmetal tab`); el espesor es el del material de la chapa. "
+    "Con la base hecha, `se extrude`, `se hole` y `se extrude --cut` funcionan sobre ella."
+)
+
+
+def _exigir_base_de_chapa(doc: Any, tipo: str, comando: str) -> None:
+    """En una chapa sin modelo, una protrusión de pieza como base da exit 6 sin tocar nada.
+
+    Verificado en vivo (2026-11-25): `Models.AddFiniteExtrudedProtrusion` en un .psm crea una
+    `ExtrudedProtrusion`, no un Tab, y esa chapa no se desarrolla (`flat-dxf --create` no puede
+    crear el flat pattern con ninguna arista). Sobre un Tab, una protrusión sí se desarrolla.
+    """
+    if tipo != "sheetmetal" or _modelo(doc) is not None:
+        return
+    raise NoSoportado(
+        f"`{comando}` no puede crear la base de una chapa: Solid Edge haría una operación de pieza "
+        "que no se puede desarrollar.",
+        details={"tipo": tipo, "modelo_base": False, "hint": PISTA_TAB},
+    )
+
+
+DIRECCIONES_DE_TAB = ("normal", "reverse")
+
+
+def planificar_tab(perfil: str | None, direccion: str) -> dict[str, Any]:
+    direccion = validar_direccion(direccion)
+    if direccion not in DIRECCIONES_DE_TAB:
+        raise ArgumentoInvalido(
+            f"Un Tab no admite --direction {direccion}: usá normal o reverse.",
+            details={"validas": list(DIRECCIONES_DE_TAB)},
+        )
+    return {"accion": "sheetmetal.tab", "perfil": validar_perfil(perfil), "direccion": direccion}
+
+
+def crear_tab(doc: Any, perfil: str | None, direccion: str) -> dict[str, Any]:
+    """Base de una chapa: `Models.AddBaseTab(perfil, lado)` con el espesor del material.
+
+    Verificado en vivo (2026-11-25), rectángulo de 100 x 50 mm en `top` hecho con `se sketch rect`:
+    `igRight` (`normal`) da el Tab de z = 0 a +1 mm y `igLeft` (`reverse`), de -1 mm a 0; volumen
+    5e-6 m3 con el espesor por defecto (1 mm). Solo crea la base: con un modelo ya hecho, exit 2.
+    """
+    datos = planificar_tab(perfil, direccion)
+    exigir_tipo(doc, ("sheetmetal",), "sheetmetal tab")
+    exigir_modelable(doc, "sheetmetal tab")
+    if _modelo(doc) is not None:
+        raise ArgumentoInvalido(
+            "La chapa ya tiene un modelo base: `se sheetmetal tab` solo crea la base. Para "
+            "agregar material usá `se extrude`.",
+            details={"modelo_base": True},
+        )
+    indice, objeto = resolver_perfil(doc, datos["perfil"])
+    modelos = leer(lambda: doc.Models)
+    leer(lambda: modelos.AddBaseTab(objeto, _lado(datos["direccion"])))
+    modelo = _modelo(doc)
+    if modelo is None:
+        raise ErrorCom("Solid Edge no creó el Tab (el documento sigue sin modelo).")
+    tabs = opcional(lambda: modelo.Tabs)
+    return {
+        "operacion": "tab",
+        "nombre": None if tabs is None else _ultimo_nombre(tabs),
+        "direccion": datos["direccion"],
+        "perfil": indice,
+        "modelo_base": True,
+        "volumen_si": _volumen(doc),
+    }
+
+
 # --- Revolución -------------------------------------------------------------------------------
 
 
@@ -578,7 +658,8 @@ def _poner_eje(perfil: Any, eje: str) -> Any:
 def revolucionar(doc: Any, angulo: str, perfil: str | None, eje: str) -> dict[str, Any]:
     """Revolución de un perfil alrededor de uno de sus ejes (`x`: y=0, `y`: x=0)."""
     datos = planificar_revolucion(angulo, perfil, eje)
-    exigir_modelable(doc, "revolve")
+    tipo = exigir_modelable(doc, "revolve")
+    _exigir_base_de_chapa(doc, tipo, "revolve")
     radianes = datos["angulo_si"]
     indice, objeto = resolver_perfil(doc, datos["perfil"])
     modelo = _modelo(doc)
@@ -698,6 +779,7 @@ __all__ = [
     "crear_circulo",
     "crear_perfil",
     "crear_rect",
+    "crear_tab",
     "exigir_modelable",
     "extruir",
     "parsear_angulo",
@@ -709,6 +791,7 @@ __all__ = [
     "planificar_perfil",
     "planificar_rect",
     "planificar_revolucion",
+    "planificar_tab",
     "resolver_perfil",
     "revolucionar",
     "validar_perfil",
