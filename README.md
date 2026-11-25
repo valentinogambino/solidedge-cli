@@ -228,9 +228,10 @@ lo que modifica el estado del documento: lo bloquea `--readonly` y `--dry-run` s
 Solo pieza, chapa y ensamble; otro tipo de documento da exit 2.
 
 En **pieza y chapa** la lectura sin densidad usa `Model.GetPhysicalProperties` (`Status` 1 = hay
-propiedades guardadas; 2 = no hay, todo en cero). Un cálculo con `--density` recién se puede leer
-sin densidad después de guardar el documento. `GetUserPhysicalProperties` solo devuelve valores
-cargados a mano y no sirve. En un **ensamble** no existe cálculo con densidad (`--density` da exit
+propiedades guardadas; 2 = no hay, todo en cero). El cálculo con `--density` devuelve los valores
+recalculados en el momento. La lectura posterior sin densidad depende de que Solid Edge devuelva
+propiedades guardadas (ver Limitaciones). `GetUserPhysicalProperties` solo devuelve valores
+cargados a mano. En un **ensamble** no existe cálculo con densidad (`--density` da exit
 6, `no_soportado`): la masa sale de los materiales de las piezas con
 `PhysicalProperties.GetAssemblyPhysicalProperties` (corre `Update()` si está desactualizado, y
 entonces `actualizado: true`); una pieza sin material cuenta con densidad 1 kg/m3 (`data.piezas_sin_material` las lista por
@@ -1065,6 +1066,8 @@ están en la sección de cada comando.
 | hresult de "ocupado" (exit 7) | **no reproducible**: Solid Edge no rechaza llamadas (atiende o encola); sin timeout, un modal deja al comando esperando |
 | `features suppress` en operaciones sincrónicas | **imposible** por la API (exit 6, ver `features suppress`) |
 | `sheetmetal flat-dxf` sin desarrollo | exit 5 salvo `--create`; un `--create` fallido deja un `FlatPatternModel` vacío que la API no borra |
+| bridas y agujeros en chapa doblada | `sheetmetal tab` solo crea la base y no acepta una cara existente. Sin comando de brida: probado con `se run --allow-scripts` y `Flanges.AddSync` sobre una base creada en modo sincrónico. Después, en modo ordenado, `hole --plane front --direction reverse --through` perforó el tramo vertical. El DXF incluyó ambos agujeros y una línea de pliegue en `DOWN_CENTERLINES` |
+| `mass` sin densidad tras recalcular y guardar | el guardado no garantiza que la API devuelva propiedades físicas guardadas. En una pieza ordenada de prueba, `Model.GetPhysicalProperties` devolvió estado 2 y valores vacíos tras `mass --density 7850` y `docs save`, incluso después de reabrir la pieza. El volumen del cuerpo se pudo leer al reabrir |
 | vistas sobre el rótulo | el layout reserva 30 mm abajo y el rótulo ISO mide 50,8 mm: con escalas grandes una vista puede pisarlo |
 | marca de agua de Community Edition | en el PDF, no se puede quitar (DXF y PNG no la traen) |
 
