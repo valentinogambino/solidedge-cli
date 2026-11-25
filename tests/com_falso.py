@@ -218,8 +218,9 @@ class DocumentoFalso(_ConFallos):
         return b"dxf-plano"
 
     def _consolidar_fisicas(self) -> None:
-        """Un cálculo con densidad recién se puede leer (`GetPhysicalProperties`) tras guardar."""
-        if self.fisicas_pendientes is not None:
+        """Un cálculo con densidad se puede leer (`GetPhysicalProperties`) tras guardar, pero solo
+        si el documento tiene material: sin él Solid Edge sigue en estado 2 (verificado en vivo)."""
+        if self.fisicas_pendientes is not None and getattr(self, "material", ""):
             self.fisicas_calculadas = self.fisicas_pendientes
             self.fisicas_pendientes = None
 

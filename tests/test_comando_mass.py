@@ -1,7 +1,7 @@
 """`se mass` sobre el COM falso."""
 
 import pytest
-from com_falso import ColeccionFalsa, ModeloFalso, OcurrenciaFalsa
+from com_falso import ColeccionFalsa, ModeloFalso, OcurrenciaFalsa, com_error
 
 CLAVES = {
     "masa",
@@ -90,7 +90,8 @@ def test_sin_densidad_ni_calculo_previo_da_exit_2(cli, app_falsa):
 
 
 def test_el_calculo_con_density_se_puede_leer_recien_despues_de_guardar(cli, app_falsa):
-    _pieza(app_falsa)
+    doc = _pieza(app_falsa)
+    doc.material = "Steel"
 
     assert cli("mass", "--density", "2700")[0].exit_code == 0
     assert cli("mass")[0].exit_code == 2  # verificado en vivo: Status 2 hasta guardar
@@ -316,3 +317,70 @@ def test_tupla_incompleta_da_error_com(cli, app_falsa, pieza, monkeypatch):
     monkeypatch.setattr(ModeloFalso, "GetPhysicalProperties", lambda self, **kwargs: (1.0, 2.0))
     r, sobre = cli("mass")
     assert r.exit_code == 4 and sobre["error"]["code"] == "com_error"
+
+
+# --- Pieza sin material: estado 2 de GetPhysicalProperties (verificado en vivo, 2026-11-25) ------
+
+
+def test_sin_material_y_sin_density_explica_la_causa_en_vez_del_estado_crudo(cli, app_falsa):
+    _pieza(app_falsa)
+
+    r, sobre = cli("mass")
+
+    error = sobre["error"]
+    assert r.exit_code == 2 and error["code"] == "argumento_invalido"
+    assert "no tiene material asignado" in error["message"] and "--density" in error["message"]
+    assert "después de guardarlo" not in error["message"]
+    assert error["details"] == {"estado_solid_edge": 2, "causa": "sin_material"}
+    assert sobre["data"] is None
+
+
+def test_calcular_con_density_y_guardar_no_alcanza_si_no_hay_material(cli, app_falsa):
+    _pieza(app_falsa)
+
+    assert cli("mass", "--density", "7850")[0].exit_code == 0
+    assert cli("docs", "save")[0].exit_code == 0
+    r, sobre = cli("mass")
+
+    assert r.exit_code == 2 and sobre["error"]["details"]["causa"] == "sin_material"
+
+
+def test_con_material_y_estado_2_no_se_acusa_al_material(cli, app_falsa):
+    doc = _pieza(app_falsa)
+    doc.material = "Steel"
+
+    r, sobre = cli("mass")
+
+    error = sobre["error"]
+    assert r.exit_code == 2 and "causa" not in error["details"]
+    assert error["details"]["estado_solid_edge"] == 2 and "estado 2" in error["message"]
+
+
+def test_con_density_y_sin_material_advierte_sin_cambiar_los_campos(cli, app_falsa):
+    _pieza(app_falsa)
+
+    r, sobre = cli("mass", "--density", "2700")
+
+    data = sobre["data"]
+    assert r.exit_code == 0 and sobre["error"] is None
+    assert set(data) == CLAVES | {"advertencia"}
+    assert "no tiene material" in data["advertencia"]
+    assert data["masa"] == pytest.approx(0.001 * 2700.0) and data["densidad"] == 2700.0
+
+
+def test_con_density_y_con_material_no_advierte(cli, app_falsa):
+    doc = _pieza(app_falsa)
+    doc.material = "Steel"
+
+    r, sobre = cli("mass", "--density", "2700")
+
+    assert r.exit_code == 0 and set(sobre["data"]) == CLAVES
+
+
+def test_sin_poder_consultar_el_material_no_se_inventa_la_causa(cli, app_falsa):
+    _pieza(app_falsa)
+    app_falsa.fallar("GetMaterialTable", com_error(0x80004005, "Error", "sin tabla"))
+
+    r, sobre = cli("mass")
+
+    assert r.exit_code == 2 and "causa" not in sobre["error"]["details"]

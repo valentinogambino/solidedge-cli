@@ -119,6 +119,18 @@ def test_masa(app_falsa):
     assert masa["actualizado"] is True
     assert masa["densidad"] == 2700
     assert isinstance(masa["centro_de_masa"], list)
+    assert "no tiene material" in masa["advertencia"]  # pieza sin material: la masa no se guarda
+
+
+def test_masa_sin_material_y_sin_densidad_explica_la_causa(app_falsa):
+    doc = app_falsa.agregar_documento("Pieza.par")
+    doc.Models = ColeccionFalsa([ModeloFalso(doc)])
+
+    sobre = servidor.mass()
+
+    assert sobre["ok"] is False and sobre["error"]["code"] == "argumento_invalido"
+    assert "no tiene material asignado" in sobre["error"]["message"]
+    assert sobre["error"]["details"]["causa"] == "sin_material"
 
 
 @pytest.mark.parametrize(
