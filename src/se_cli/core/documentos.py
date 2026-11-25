@@ -114,6 +114,28 @@ def _sin_prefijo_largo(ruta: str) -> str:
     return ruta
 
 
+_RESERVADOS_WINDOWS = frozenset(
+    {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+    | {f"{base}{n}" for base in ("COM", "LPT") for n in "123456789¹²³"}
+)
+
+
+def es_nombre_reservado(nombre: str) -> bool:
+    """Dice si `nombre` (un componente de ruta, no una ruta) es un dispositivo reservado de
+    Windows. Usa `os.path.isreserved` (Python 3.13+) si existe; si no, una lista propia con el
+    mismo criterio que Windows: sin distinguir mayúsculas, ignorando la extensión y los
+    espacios o puntos finales (`NUL.txt`, `con .par` y `COM1.asm` son reservados)."""
+    isreserved = getattr(os.path, "isreserved", None)
+    if isreserved is not None:
+        return bool(isreserved(nombre))
+    return _reservado_por_lista(nombre)
+
+
+def _reservado_por_lista(nombre: str) -> bool:
+    base = nombre.partition(".")[0].rstrip(" ")
+    return base.upper() in _RESERVADOS_WINDOWS
+
+
 def validar_nombres_windows(ruta: str) -> None:
     r"""Rechazá (exit 2) nombres que Windows no admite: reservados (CON, NUL, COM1...), con
     caracteres prohibidos, terminados en punto o espacio, o de más de 255 caracteres.
@@ -128,7 +150,7 @@ def validar_nombres_windows(ruta: str) -> None:
             if parte in (".", ".."):
                 continue  # navegación, no un nombre
             if (
-                PureWindowsPath(parte).is_reserved()
+                es_nombre_reservado(parte)
                 or parte.endswith((".", " "))
                 or len(parte.encode("utf-16-le", errors="surrogatepass")) > 510
                 or any(c in '<>:"|?*' or ord(c) < 32 for c in parte)
