@@ -925,3 +925,29 @@ no se serializan (solo datos planos).
 `uv run pytest` usa un COM falso y no necesita Solid Edge. Las pruebas con la marca `live`
 necesitan Solid Edge abierto y no corren por defecto: `uv run pytest -m live`.
 `src/se_cli/core/constants.py` se regenera con `uv run python scripts/gen_constants.py`.
+
+## Extensión para Claude Desktop (.mcpb)
+
+La extensión usa las mismas operaciones de Solid Edge 2026 que el CLI.
+Para compilarla en Windows necesitás `uv` y Node.js con `npx`. Desde la raíz
+del repo, corré en PowerShell:
+
+```powershell
+.\scripts\empaquetar_mcpb.ps1
+```
+
+El script instala las dependencias fijadas en `uv.lock`, valida el manifiesto
+y genera `dist/solidedge-cli.mcpb`. Para instalarla necesitás Windows x64,
+Solid Edge 2026 y Python 3.11 x64. En **Configuración → Aplicación de escritorio**, elegí
+**Administrar** junto a **Extensiones**. En **Configuración avanzada → Desarrollador
+de extensiones**, elegí **Instalar extensión…**, seleccioná el archivo `.mcpb`
+y confirmá la instalación. En la configuración de la extensión, seleccioná
+el ejecutable de **Python 3.11 x64**. Si instalaste Python con `uv`, podés
+obtener la ruta con `uv python find --system 3.11`.
+
+[Guía oficial de instalación de extensiones locales](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop).
+
+Abrí Solid Edge antes de usar las herramientas. Probá `status` para comprobar
+qué documento está activo. Usá rutas absolutas cuando le pidas a Claude que
+abra, inserte o exporte archivos. Para ejecutar el servidor desde el repo,
+usá `uv run --extra mcp se-mcp`.

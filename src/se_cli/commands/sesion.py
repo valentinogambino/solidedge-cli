@@ -7,7 +7,8 @@ from typing import Annotated
 import typer
 
 from se_cli.core import documentos
-from se_cli.core.errors import ArgumentoInvalido, NoConectado
+from se_cli.core.errors import ArgumentoInvalido
+from se_cli.core.session import Sesion
 from se_cli.ejecucion import ejecutar
 
 
@@ -32,21 +33,7 @@ def registrar(app: typer.Typer) -> None:
     def status(ctx: typer.Context) -> None:
         """Estado de Solid Edge. Sin instancia abierta informa `conectado: false` (exit 0)."""
 
-        def correr(sesion):
-            try:
-                sesion.conectar()
-            except NoConectado:
-                return {
-                    "conectado": False,
-                    "version": None,
-                    "nombre": None,
-                    "visible": None,
-                    "documentos": 0,
-                    "activo": None,
-                }
-            return sesion.llamar(documentos.estado)
-
-        ejecutar(ctx, correr, conectar=False)
+        ejecutar(ctx, Sesion.estado, conectar=False)
 
     @app.command("quit")
     def quit_(
