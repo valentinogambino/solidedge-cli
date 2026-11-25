@@ -245,3 +245,31 @@ def test_png_en_lote_activa_cada_documento(cli, app_falsa, tmp_path, formato):
     assert sobre["data"]["resumen"]["ok"] == 2
     assert [c[1] for c in _llamadas(app_falsa, "View.SaveAsImage")] == ["A.par", "D.dft"]
     assert rutas
+
+
+def test_timeout_en_un_item_corta_el_lote_y_deja_el_resto_sin_intentar(
+    cli, app_falsa, sta, monkeypatch, tmp_path
+):
+    from com_falso import BloqueoFalso
+
+    _tocar(tmp_path, "A.par", "B.par", "C.par")
+    bloqueo = BloqueoFalso()
+    bloqueo.bloquear("SaveCopyAs")
+    app_falsa._documentos.al_abrir["B.par"] = {"bloqueo": bloqueo}
+    monkeypatch.setattr(sta, "_cancelar", lambda _: bloqueo.cancelar())
+
+    r, sobre = cli("--timeout", "0.3", "export", str(tmp_path / "*.par"), "--format", "step")
+
+    assert r.exit_code == 7 and sobre["error"]["code"] == "ocupado"
+    detalles = sobre["error"]["details"]
+    assert detalles["motivo"] == "timeout" and detalles["cancelacion"] == "cancelada"
+    por_nombre = {x["entrada"].rsplit("\\", 1)[-1]: x for x in detalles["resultados"]}
+    assert por_nombre["A.par"]["ok"] is True
+    assert por_nombre["B.par"]["ok"] is False
+    assert por_nombre["B.par"]["error"]["code"] == "ocupado"
+    assert por_nombre["C.par"]["ok"] is False
+    assert por_nombre["C.par"]["error"]["message"] == (
+        "No se intentó: Solid Edge no respondió a tiempo."
+    )
+    assert _llamadas(app_falsa, "SaveCopyAs")[-1][1] == "B.par"
+    assert all(c[1] != "C.par" for c in app_falsa.registro if len(c) > 1)

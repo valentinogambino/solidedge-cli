@@ -245,24 +245,11 @@ def escribir(
     con el destino ocupado da exit 6. `verificar(ruta)` corre sobre el archivo escrito (si
     levanta, se lo deshace igual que a un archivo vacío).
     """
-    apartado: str | None = None
-    if documentos.exigir_destino_libre(ruta, sobrescribir):
-        apartado = documentos.apartar(ruta)
-    try:
+    with documentos.respaldo(ruta, sobrescribir, limpiar_destino=True):
         formato.exportar(doc, ruta)
         tamano = verificar_archivo(ruta)
         if verificar is not None:
             verificar(ruta)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            if os.path.exists(ruta):
-                os.remove(ruta)
-        if apartado is not None:
-            os.replace(apartado, ruta)
-        raise
-    if apartado is not None:
-        with contextlib.suppress(OSError):
-            os.remove(apartado)
     return tamano
 
 

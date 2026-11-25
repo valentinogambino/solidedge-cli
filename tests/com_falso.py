@@ -5,6 +5,7 @@ from __future__ import annotations
 import fnmatch
 import math
 import os
+import threading
 from collections import defaultdict
 from typing import Any
 
@@ -33,10 +34,41 @@ def com_error(hresult: int, strerror: str = "Error", descripcion: str | None = N
     return ComErrorFalso(hresult, strerror, excepinfo)
 
 
+class BloqueoFalso:
+    """Un acceso COM que queda retenido hasta que el test lo cancele o lo suelte."""
+
+    def __init__(self) -> None:
+        self._evento = threading.Event()
+        self._cancelado = False
+        self._nombre: str | None = None
+        self.entro = threading.Event()
+
+    def bloquear(self, nombre: str) -> None:
+        self._nombre = nombre
+
+    def tocar(self, nombre: str) -> None:
+        if nombre != self._nombre:
+            return
+        self.entro.set()
+        if not self._evento.wait(timeout=15):
+            raise AssertionError(f"No se liberó el bloqueo falso de {nombre}.")
+        self._nombre = None
+        if self._cancelado:
+            raise ComErrorFalso(0x8001011F)
+
+    def cancelar(self) -> None:
+        self._cancelado = True
+        self._evento.set()
+
+    def soltar(self) -> None:
+        self._evento.set()
+
+
 class _ConFallos:
     """Mixin: `fallar(nombre, *errores)` hace que los próximos accesos a `nombre` levanten."""
 
     def __init__(self) -> None:
+        self.bloqueo = BloqueoFalso()
         self._fallos: dict[str, list[BaseException]] = defaultdict(list)
         self.accesos: dict[str, int] = defaultdict(int)
 
@@ -45,6 +77,7 @@ class _ConFallos:
 
     def _tocar(self, nombre: str) -> None:
         self.accesos[nombre] += 1
+        self.bloqueo.tocar(nombre)
         if self._fallos[nombre]:
             raise self._fallos[nombre].pop(0)
 
@@ -1151,7 +1184,8 @@ class DocumentosFalsos(_ConFallos):
         self.registro = registro if registro is not None else []
         self._documentos = list(documentos or [])
         # Configuración por nombre de archivo para los documentos que abre `Open`:
-        # {"error": excepción}, {"modo_exportacion": "nada" | "vacio"} o {"caja": (min, max)}.
+        # {"error": excepción}, {"modo_exportacion": "nada" | "vacio"}, {"caja": (min, max)} o
+        # {"bloqueo": BloqueoFalso}.
         self.al_abrir: dict[str, dict[str, Any]] = {}
         # Lo que quedo guardado en disco por ruta (desarrollo de una chapa) y se ve al reabrir.
         self.persistidos: dict[str, dict[str, Any]] = {}
@@ -1208,6 +1242,8 @@ class DocumentosFalsos(_ConFallos):
             solo_lectura=os.path.exists(ruta) and not os.access(ruta, os.W_OK),
         )
         doc.modo_exportacion = config.get("modo_exportacion", "escribir")
+        if "bloqueo" in config:
+            doc.bloqueo = config["bloqueo"]
         if "desarrollo" in config:
             con_chapa(doc, config["desarrollo"])
         if ruta in self.persistidos:

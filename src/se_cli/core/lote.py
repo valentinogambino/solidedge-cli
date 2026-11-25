@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from se_cli.core import acceso, documentos
+from se_cli.core import acceso, documentos, plazo
 from se_cli.core.acceso import leer
 from se_cli.core.errors import (
     ArgumentoInvalido,
@@ -24,6 +24,7 @@ from se_cli.core.errors import (
     ErrorLote,
     NoConectado,
     SoloLectura,
+    TiempoAgotado,
     traducir,
 )
 from se_cli.core.exportar import (
@@ -150,10 +151,11 @@ def planificar(
     return items
 
 
-def _exportar_item(app: Any, item: Item, formato: Formato, sobrescribir: bool) -> dict[str, Any]:
+def _exportar_item(
+    app: Any, item: Item, formato: Formato, sobrescribir: bool, resultado: dict[str, Any]
+) -> None:
     """Un archivo del lote: usa la instancia abierta o abre una y la cierra sin guardar."""
     inicio = time.perf_counter()
-    resultado: dict[str, Any] = {"entrada": item.entrada, "salida": item.salida}
     doc = None
     abierto_por_el_lote = False
     try:
@@ -171,6 +173,9 @@ def _exportar_item(app: Any, item: Item, formato: Formato, sobrescribir: bool) -
         with ventana_activa(app, doc, formato):
             resultado["bytes"] = escribir(doc, formato, item.salida, sobrescribir)
         resultado["ok"] = True
+    except TiempoAgotado as error:
+        resultado.update(ok=False, error={**error.a_dict(), "details": error.details.copy()})
+        raise
     except Exception as error:  # noqa: BLE001 - un archivo que falla no corta el lote
         resultado["ok"] = False
         resultado["error"] = traducir(error).a_dict()
@@ -181,11 +186,10 @@ def _exportar_item(app: Any, item: Item, formato: Formato, sobrescribir: bool) -
             except Exception as error:  # noqa: BLE001
                 resultado["aviso"] = f"No se pudo cerrar el documento: {traducir(error).mensaje}"
         resultado["duracion_s"] = round(time.perf_counter() - inicio, 3)
-    return resultado
 
 
-def _no_intentado(item: Item) -> dict[str, Any]:
-    error = NoConectado("No se intentó: Solid Edge dejó de estar disponible.")
+def _no_intentado(item: Item, mensaje: str) -> dict[str, Any]:
+    error = NoConectado(mensaje)
     return {
         "entrada": item.entrada,
         "salida": item.salida,
@@ -193,6 +197,12 @@ def _no_intentado(item: Item) -> dict[str, Any]:
         "error": error.a_dict(),
         "duracion_s": 0.0,
     }
+
+
+def _omitidos_por_timeout(items: list[Item]) -> list[dict[str, Any]]:
+    return [
+        _no_intentado(item, "No se intentó: Solid Edge no respondió a tiempo.") for item in items
+    ]
 
 
 def exportar(
@@ -210,21 +220,55 @@ def exportar(
             os.makedirs(carpeta, exist_ok=True)
         except OSError as error:
             raise ArgumentoInvalido(f"No se pudo crear la carpeta {carpeta}: {error}") from error
-    activo_previo = documentos.documento_activo(app)
     resultados: list[dict[str, Any]] = []
+    pendiente: Item | None = None
+
+    def al_abandonar(error: TiempoAgotado) -> list[dict[str, Any]]:
+        parciales = resultados.copy()
+        if pendiente is not None:
+            parciales.append(
+                {
+                    "entrada": pendiente.entrada,
+                    "salida": pendiente.salida,
+                    "ok": False,
+                    "error": {**error.a_dict(), "details": error.details.copy()},
+                    "duracion_s": error.details["esperado_s"],
+                }
+            )
+        parciales.extend(_omitidos_por_timeout(items[len(parciales) :]))
+        return parciales
+
+    plazo.registrar_lote(al_abandonar)
+    activo_previo = documentos.documento_activo(app)
     try:
         for item in items:
-            resultado = _exportar_item(app, item, formato, sobrescribir)
-            resultados.append(resultado)
+            plazo.comprobar_cancelacion()
+            pendiente = item
+            resultado = {"entrada": item.entrada, "salida": item.salida}
+            try:
+                _exportar_item(app, item, formato, sobrescribir, resultado)
+            finally:
+                with plazo.publicar_progreso():
+                    resultados.append(resultado)
+                    pendiente = None
             if not resultado["ok"] and resultado["error"]["code"] == "no_conectado":
-                resultados.extend(_no_intentado(resto) for resto in items[len(resultados) :])
+                resultados.extend(
+                    _no_intentado(resto, "No se intentó: Solid Edge dejó de estar disponible.")
+                    for resto in items[len(resultados) :]
+                )
                 break
+    except TiempoAgotado as error:
+        resultados.extend(_omitidos_por_timeout(items[len(resultados) :]))
+        error.details["resultados"] = resultados
+        raise
     finally:
         if activo_previo is not None:
             with contextlib.suppress(Exception):
                 actual = documentos.documento_activo(app)
                 if actual is None or actual is not activo_previo:
                     leer(activo_previo.Activate)
+    plazo.comprobar_cancelacion()
+    plazo.registrar_lote(None)
     cantidad_ok = sum(1 for r in resultados if r["ok"])
     data: dict[str, Any] = {
         "formato": formato.clave,

@@ -1,10 +1,11 @@
 import threading
 
 import pytest
-from com_falso import AplicacionFalsa, FabricaApp, com_error
+from com_falso import AplicacionFalsa, BloqueoFalso, FabricaApp, com_error
 
 from se_cli.core.errors import ErrorCom, NoConectado, Ocupado, SeError
 from se_cli.core.session import Sesion
+from se_cli.core.sta import HiloSta
 
 
 def test_sin_instancia_da_no_conectado_y_no_lanza(sta):
@@ -196,3 +197,41 @@ def test_cerrar_suelta_la_app(sesion):
     sesion.cerrar()
     with pytest.raises(NoConectado):
         sesion.llamar(lambda app: app.Version)
+
+
+@pytest.mark.parametrize("abandona", [False, True])
+def test_sesion_despues_del_timeout(app_falsa, abandona):
+    import threading
+
+    from se_cli.core.errors import TiempoAgotado
+
+    otro = AplicacionFalsa()
+    apps = [app_falsa, otro]
+    accesos = []
+
+    def proveedor():
+        app = apps[len(accesos)]
+        accesos.append(app)
+        return app
+
+    cancelar = (lambda _: None) if abandona else (lambda _: app_falsa.bloqueo.cancelar())
+    with HiloSta(
+        lambda: None, lambda: None, habilitar=lambda: None, cancelar=cancelar, gracia=0.2
+    ) as hilo:
+        sesion = Sesion(sta=hilo, proveedor=proveedor, plazo=0.3)
+        sesion.conectar()
+        app_falsa.bloqueo = BloqueoFalso()
+        app_falsa.bloqueo.bloquear("Version")
+        viejo = hilo.ejecutar(threading.current_thread)
+        try:
+            with pytest.raises(TiempoAgotado) as info:
+                sesion.llamar(lambda app: app.Version)
+            assert info.value.details["cancelacion"] == ("abandonada" if abandona else "cancelada")
+            esperada = otro if abandona else app_falsa
+            assert sesion.llamar(lambda app: app is esperada and bool(app.Version))
+            assert accesos == (apps if abandona else [app_falsa])
+        finally:
+            app_falsa.bloqueo.soltar()
+            if abandona:
+                viejo.join(timeout=2)
+            sesion.cerrar()

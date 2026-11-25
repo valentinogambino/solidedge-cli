@@ -1,3 +1,4 @@
+import math
 from typing import Annotated
 
 import typer
@@ -52,9 +53,24 @@ def principal(
         bool,
         typer.Option("--dry-run", help="Los comandos que modifican informan qué harían."),
     ] = False,
+    timeout: Annotated[
+        float | None,
+        typer.Option(
+            "--timeout",
+            envvar="SE_TIMEOUT",
+            metavar="SEG",
+            help="Segundos máximos esperando que Solid Edge responda una llamada COM "
+            "(exit 7 al vencer). Sin esto, espera sin límite.",
+        ),
+    ] = None,
 ) -> None:
     """Manejá Solid Edge desde la terminal."""
-    contexto.obj = Opciones(json=json, readonly=readonly, dry_run=dry_run)
+    if timeout is not None and not (math.isfinite(timeout) and 0 < timeout <= 3600):
+        raise typer.BadParameter(
+            "tiene que ser un número de segundos mayor que 0 y hasta 3600.",
+            param_hint="--timeout",
+        )
+    contexto.obj = Opciones(json=json, readonly=readonly, dry_run=dry_run, timeout=timeout)
     if version:
         typer.echo(__version__)
         raise typer.Exit()

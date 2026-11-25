@@ -94,7 +94,7 @@ def test_mcp_rechaza_argumentos_fuera_de_esquema(nombre, argumentos, monkeypatch
 
 
 def test_mcp_oculta_rutas_de_excepciones(monkeypatch):
-    def fallar():
+    def fallar(**_):
         raise RuntimeError(r"C:\privado\Pieza.par")
 
     monkeypatch.setattr(mcp_server, "Sesion", fallar)
@@ -178,7 +178,7 @@ def test_lote_rechaza_carpeta_de_salida_reservada(tmp_path):
 
 
 def test_mcp_conserva_mensaje_de_errores_propios(monkeypatch):
-    def fallar():
+    def fallar(**_):
         raise ArgumentoInvalido("Argumento de prueba inválido.", details={"campo": "x"})
 
     monkeypatch.setattr(mcp_server, "Sesion", fallar)

@@ -76,3 +76,28 @@ def test_no_reintenta_errores_sin_hresult():
 def test_intentos_invalidos():
     with pytest.raises(ValueError):
         reintentar(lambda: 1, intentos=0)
+
+
+def test_cancelacion_convierte_el_error_y_no_reintenta():
+    from se_cli.core import plazo
+    from se_cli.core.errors import TiempoAgotado
+
+    estado = plazo.Plazo(0.3)
+    llamadas = []
+
+    def intento():
+        llamadas.append("COM")
+        estado.inicio_cancelacion = estado.latido
+        raise com_error(0x8001010A)
+
+    plazo.inicio_tarea(estado)
+    try:
+        with pytest.raises(TiempoAgotado) as info:
+            reintentar(intento, sleep=lambda _: pytest.fail("No debe reintentar."))
+        assert isinstance(info.value.__cause__, ComErrorFalso)
+        with pytest.raises(TiempoAgotado):
+            reintentar(intento)
+    finally:
+        plazo.fin_tarea()
+
+    assert llamadas == ["COM"]

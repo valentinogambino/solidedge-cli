@@ -20,7 +20,11 @@ from se_cli.core.session import Sesion
 
 @pytest.fixture(autouse=True)
 def usar_com_falso(monkeypatch, sesion):
-    monkeypatch.setattr(servidor, "Sesion", lambda: sesion)
+    def crear(*, plazo):
+        sesion.plazo = plazo
+        return sesion
+
+    monkeypatch.setattr(servidor, "Sesion", crear)
 
 
 def datos(sobre):
@@ -65,7 +69,12 @@ def test_status_y_connect(app_falsa):
 def test_sin_instancia(monkeypatch, sta):
     lanzador = FabricaApp()
     sesion = Sesion(sta=sta, proveedor=FabricaApp(), lanzador=lanzador, sleep=lambda _: None)
-    monkeypatch.setattr(servidor, "Sesion", lambda: sesion)
+
+    def crear(*, plazo):
+        sesion.plazo = plazo
+        return sesion
+
+    monkeypatch.setattr(servidor, "Sesion", crear)
 
     assert datos(servidor.status())["conectado"] is False
     error(servidor.connect(), "no_conectado")
@@ -205,9 +214,51 @@ def test_sheetmetal_tab_valida_antes_de_com(app_falsa):
 
 
 def test_sheetmetal_tab_rechaza_symmetric_por_esquema(monkeypatch):
-    def inesperada():
+    def inesperada(*, plazo):
         pytest.fail("Los argumentos inválidos no deben llegar a COM")
 
     monkeypatch.setattr(servidor, "Sesion", inesperada)
     with pytest.raises(ToolError, match="Argumentos inválidos"):
         asyncio.run(servidor.mcp.call_tool("sheetmetal_tab", {"direction": "symmetric"}))
+
+
+def test_timeout_mcp_y_status_siguiente(app_falsa, sta, monkeypatch, tmp_path):
+    doc = app_falsa.agregar_documento("Pieza.par", ruta=str(tmp_path / "Pieza.par"))
+    doc.bloqueo.bloquear("Save")
+    monkeypatch.setattr(sta, "_cancelar", lambda _: doc.bloqueo.cancelar())
+    # call_tool devuelve el contenido MCP y el sobre estructurado.
+    _, sobre = asyncio.run(servidor.mcp.call_tool("docs_save", {"timeout": 0.3}))
+    error(sobre, "ocupado")
+    assert sobre["error"]["details"]["motivo"] == "timeout"
+    assert datos(servidor.status())["conectado"] is True
+
+
+def test_timeout_mcp_esquema_y_validacion():
+    herramientas = asyncio.run(servidor.mcp.list_tools())
+    for herramienta in herramientas:
+        tipos = herramienta.inputSchema["properties"]["timeout"]["anyOf"]
+        assert {"exclusiveMinimum": 0, "maximum": 3600, "type": "number"} in tipos
+    with pytest.raises(ToolError):
+        asyncio.run(servidor.mcp.call_tool("status", {"timeout": 0}))
+
+
+def test_timeout_mcp_entorno(sesion, monkeypatch):
+    monkeypatch.setenv("SE_TIMEOUT", "5")
+    servidor._plazo_del_servidor.cache_clear()
+    try:
+        datos(servidor.status())
+        assert sesion.plazo == 5
+        datos(servidor.status(timeout=3))
+        assert sesion.plazo == 3
+    finally:
+        servidor._plazo_del_servidor.cache_clear()
+
+
+def test_timeout_mcp_invalido_avisa_una_vez(monkeypatch, capsys):
+    monkeypatch.setenv("SE_TIMEOUT", "nan")
+    servidor._plazo_del_servidor.cache_clear()
+    try:
+        assert servidor._plazo_del_servidor() == servidor._plazo_del_servidor() == 120
+        assert capsys.readouterr().err.count("SE_TIMEOUT inválido") == 1
+    finally:
+        servidor._plazo_del_servidor.cache_clear()

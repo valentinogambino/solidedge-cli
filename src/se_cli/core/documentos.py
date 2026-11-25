@@ -17,6 +17,7 @@ from collections.abc import Callable
 from pathlib import PureWindowsPath
 from typing import Any, TypeVar
 
+from se_cli.core import plazo
 from se_cli.core.constants import DocumentTypeConstants
 from se_cli.core.errors import (
     ArgumentoInvalido,
@@ -25,6 +26,7 @@ from se_cli.core.errors import (
     Ocupado,
     SeError,
     SoloLectura,
+    TiempoAgotado,
     traducir,
 )
 from se_cli.core.retry import reintentar
@@ -513,23 +515,44 @@ def _exigir_no_abierto_en_otro(app: Any, absoluta: str, doc: Any) -> None:
             )
 
 
+@contextlib.contextmanager
+def respaldo(ruta: str, sobrescribir: bool, *, limpiar_destino: bool = False):
+    """Apartá el destino previo y conservalo si Solid Edge podría seguir escribiendo."""
+    apartado = None
+    with plazo.proteger_archivos():
+        if exigir_destino_libre(ruta, sobrescribir):
+            apartado = apartar(ruta)
+            plazo.registrar_apartado(apartado)
+    try:
+        yield
+    except TiempoAgotado as error:
+        if apartado is not None:
+            error.details["apartado"] = apartado
+        raise
+    except BaseException:
+        with plazo.proteger_archivos():
+            if limpiar_destino:
+                with contextlib.suppress(OSError):
+                    os.remove(ruta)
+            if apartado is not None:
+                os.replace(apartado, ruta)
+            plazo.registrar_apartado(None)
+        raise
+    else:
+        with plazo.proteger_archivos():
+            if apartado is not None:
+                with contextlib.suppress(OSError):
+                    os.remove(apartado)
+            plazo.registrar_apartado(None)
+
+
 def _guardar_en(
     doc: Any, absoluta: str, sobrescribir: bool, verificar: Callable[[str], None] | None = None
 ) -> None:
-    apartado: str | None = None
-    if exigir_destino_libre(absoluta, sobrescribir):
-        apartado = apartar(absoluta)
-    try:
+    with respaldo(absoluta, sobrescribir):
         _leer(lambda: doc.SaveAs(absoluta))
         if verificar is not None:
             verificar(absoluta)
-    except BaseException:
-        if apartado is not None:
-            os.replace(apartado, absoluta)
-        raise
-    if apartado is not None:
-        with contextlib.suppress(OSError):
-            os.remove(apartado)
 
 
 def _validar_cierre(guardar_: bool, descartar: bool) -> None:
