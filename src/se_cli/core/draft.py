@@ -74,6 +74,17 @@ def _leer_hoja(draft: Any) -> tuple[float, float] | None:
     return medida
 
 
+def _nuevo_draft(app: Any, plantilla: str | None) -> Any:
+    """`Documents.Add(ProgID[, plantilla])`: la plantilla va como segundo argumento.
+
+    Verificado en vivo (2026-11-25): `Documents.Add(ruta_de_plantilla)` da 0x80020009
+    (CO_E_CLASSSTRING); `Add("SolidEdge.DraftDocument", ruta)` abre la plantilla.
+    """
+    if plantilla:
+        return leer(lambda: app.Documents.Add(PROGID_DRAFT, plantilla))
+    return leer(lambda: app.Documents.Add(PROGID_DRAFT))
+
+
 def _enlazar(draft: Any, ruta: str) -> Any:
     """`ModelLinks.Add(ruta)`: el enlace que reciben las vistas."""
     return leer(lambda: draft.ModelLinks.Add(ruta))
@@ -243,8 +254,7 @@ def crear(app: Any, plan: Plan, sobrescribir: bool, mantener_abierto: bool) -> d
                 )
             caja = _caja_del_modelo(doc_modelo, tipo)
 
-        argumento = plan.plantilla or PROGID_DRAFT
-        draft = leer(lambda: app.Documents.Add(argumento))
+        draft = _nuevo_draft(app, plan.plantilla)
         info_hoja, tamano = _medida_de_hoja(draft, plan.hoja)
         distribucion = vistas.distribuir(tamano, plan.vistas)
         if plan.factor is None:
