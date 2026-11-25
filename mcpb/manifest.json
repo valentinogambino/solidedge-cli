@@ -1,0 +1,29 @@
+{
+  "manifest_version": "0.4",
+  "name": "solidedge-cli",
+  "display_name": "Solid Edge",
+  "version": "0.1.0",
+  "description": "Herramientas locales para manejar Solid Edge 2026 desde Claude Desktop.",
+  "author": { "name": "Valentino Gambino" },
+  "license": "MIT",
+  "server": {
+    "type": "python",
+    "entry_point": "server/main.py",
+    "mcp_config": {
+      "command": "${user_config.python_exe}",
+      "args": ["-I", "-S", "${__dirname}/server/main.py"]
+    }
+  },
+  "user_config": {
+    "python_exe": {
+      "type": "file",
+      "title": "Python 3.11 x64",
+      "description": "Seleccioná el ejecutable python.exe de Python 3.11 para Windows x64.",
+      "required": true
+    }
+  },
+  "compatibility": {
+    "platforms": ["win32"],
+    "runtimes": { "python": ">=3.11.0 <3.12.0" }
+  }
+}

@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable, Iterator
 from typing import Any, TypeVar
 
+from se_cli.core import documentos
 from se_cli.core.errors import (
     MK_E_UNAVAILABLE,
     NoConectado,
@@ -96,6 +97,21 @@ class Sesion:
         Devuelve datos planos: `{"version", "nombre", "lanzada"}`.
         """
         return self._sta.ejecutar(self._conectar, lanzar)
+
+    def estado(self) -> dict[str, Any]:
+        """Leé el estado de la instancia abierta, si existe."""
+        try:
+            self.conectar()
+        except NoConectado:
+            return {
+                "conectado": False,
+                "version": None,
+                "nombre": None,
+                "visible": None,
+                "documentos": 0,
+                "activo": None,
+            }
+        return self.llamar(documentos.estado)
 
     def _conectar(self, lanzar: bool) -> dict[str, Any]:
         lanzada = False
