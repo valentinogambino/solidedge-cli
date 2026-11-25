@@ -16,10 +16,10 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from se_cli.core import acceso, documentos, exportar, vistas
+from se_cli.core import acceso, documentos, exportar, fondos, vistas
 from se_cli.core.acceso import leer, opcional
 from se_cli.core.constants import PaperSizeConstants
-from se_cli.core.errors import ArgumentoInvalido
+from se_cli.core.errors import ArgumentoInvalido, NoConectado, Ocupado
 from se_cli.core.lote import TIPO_POR_EXTENSION
 
 PROGID_DRAFT = "SolidEdge.DraftDocument"
@@ -52,11 +52,18 @@ def _fijar_fondo(draft: Any, nombre: str) -> str | None:
     Devuelve el nombre del fondo, o None si la plantilla no tiene uno para ese tamaño.
     """
 
-    def poner() -> str:
-        fondo = f"{nombre}-Sheet"
+    fondo = f"{nombre}-Sheet"
+
+    def poner() -> str | None:
         hojas = draft.Sections.BackgroundSection.Sheets
-        draft.ActiveSheet.Background = hojas.Item(fondo)
-        return fondo
+        # Se busca por nombre antes de pedir `Item`: con un nombre que no existe Solid Edge
+        # responde RPC_E_SERVERFAULT (0x80010105), verificado en vivo con `A5-Sheet`.
+        for i in range(1, int(hojas.Count) + 1):
+            hoja = hojas.Item(i)
+            if str(hoja.Name) == fondo:
+                draft.ActiveSheet.Background = hoja
+                return fondo
+        return None
 
     return opcional(poner)
 
@@ -211,14 +218,42 @@ def planificar(
 # --- Ejecución -------------------------------------------------------------------------------
 
 
+def _generar_fondo(draft: Any, nombre: str) -> tuple[str | None, dict[str, Any]]:
+    """Fondo `<nombre>-Sheet` generado a partir del más cercano de la plantilla (ver `fondos`).
+
+    Devuelve `(nombre del fondo o None, datos para el resultado)`. Un fallo no corta el plano:
+    la hoja queda sin fondo, como antes, y el motivo va en `fondo_error`.
+    """
+    papel = int(getattr(PaperSizeConstants, f"igIso{nombre}Wide"))
+    try:
+        como = fondos.generar(draft, nombre, vistas.HOJAS[nombre], papel)
+        fondo = f"{nombre}-Sheet"
+        hojas = leer(lambda: draft.Sections.BackgroundSection.Sheets)
+        leer(lambda: setattr(draft.ActiveSheet, "Background", hojas.Item(fondo)))
+    except (Ocupado, NoConectado):
+        raise
+    except Exception as error:
+        return None, {"fondo_error": f"No se pudo generar el fondo {nombre}-Sheet: {error}"}
+    return fondo, {"fondo_generado": como}
+
+
 def _medida_de_hoja(draft: Any, pedida: str | None) -> tuple[dict[str, Any], tuple[float, float]]:
     """Tamaño de hoja para el layout y su descripción para el resultado."""
     if pedida is not None:
         _fijar_hoja(draft, pedida)
         fondo = _fijar_fondo(draft, pedida)
         ancho, alto = vistas.HOJAS[pedida]
-        info = {"nombre": pedida, "ancho": ancho, "alto": alto, "origen": "solicitada"}
+        info: dict[str, Any] = {
+            "nombre": pedida,
+            "ancho": ancho,
+            "alto": alto,
+            "origen": "solicitada",
+        }
+        extra: dict[str, Any] = {}
+        if fondo is None:
+            fondo, extra = _generar_fondo(draft, pedida)
         info["fondo"] = fondo
+        info.update(extra)
         return info, (ancho, alto)
     leida = _leer_hoja(draft)
     if leida is not None:

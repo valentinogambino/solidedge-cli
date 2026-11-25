@@ -808,11 +808,45 @@ medirlo para `--scale auto` y no estaba abierto.
   en un ensamble). Si la API no la da, usa 1:1 y devuelve `"escala_auto": false`.
 - `--sheet`: `A5` a `A0` apaisadas. Sin esto se usa la hoja de la plantilla (A2 en la ISO Metric,
   o A3 si no se puede leer). Además del tamaño se reemplaza el fondo de la hoja (marco y cuadro de
-  rotulación) por el `A<n>-Sheet` de la plantilla (`hoja.fondo`); la ISO Metric solo trae A4, A3,
-  A2 y A1, así que en A5 y A0 `fondo` es `null` y el marco sigue siendo el de A2.
+  rotulación) por el `A<n>-Sheet` de la plantilla (`hoja.fondo`). Las plantillas métricas de Solid
+  Edge 2026 (ISO, DIN, GB, JIS, UNI, ESKD y Metric) traen solo A4 a A1: para **A5 y A0** se genera
+  el fondo (`hoja.fondo_generado`, ver abajo). Si no se puede generar, `fondo` es `null`, el motivo
+  va en `hoja.fondo_error` y el plano se hace igual.
+- Las vistas reservan 30 mm abajo, menos que el rótulo de la plantilla ISO (50,8 mm de alto en A5–A2):
+  con escalas grandes una vista puede quedar sobre el rótulo, en cualquier tamaño de hoja.
 - Las vistas se reparten en una grilla de celdas sin superposición: la frontal abajo a la
   izquierda, la superior encima, la derecha al lado y la isométrica en la esquina libre. Se deja un
   margen de 15 mm y 30 mm abajo para el cuadro de rotulación.
+
+#### Fondo generado para A5 y A0
+
+```powershell
+se --json draft from-part C:\p\Pieza.par --sheet A5 --pdf
+# ... "hoja": {"nombre": "A5", "ancho": 0.21, "alto": 0.148, "origen": "solicitada", "fondo": "A5-Sheet", "fondo_generado": {"desde": "A4-Sheet", "metodo": "pareja", "referencia": "A3-Sheet", "objetos": 54}} ...
+```
+
+Se copia el fondo de tamaño más cercano de la plantilla en una hoja de fondo nueva y se reubica cada
+objeto en su esquina: el marco se estira, el rótulo queda abajo a la derecha, la tabla de
+revisiones arriba a la derecha y el texto del tamaño pasa a decir `A5` o `A0`. Los campos con
+propiedades (autor, fecha, archivo, hoja) siguen funcionando. Solo vive en el Draft creado; la
+plantilla no se toca.
+
+| paso | llamada | verificado en vivo (2026-11-25) |
+|---|---|---|
+| hoja de fondo nueva | `Sheets.AddSheet("A5-Sheet", igBackgroundSection)` + `SheetSetup.SheetSizeOption` | crea un fondo vacío del tamaño pedido (`BackgroundSection.Sheets` pasa de 4 a 5) |
+| copiar el contenido | `Sheet.ReplaceBackground(archivo, "A4-Sheet")` sobre la hoja nueva | copia los 54 objetos (27 líneas, 20 textos y 7 globos con propiedades). Lee de un archivo: se usa una copia temporal del Draft en curso (`SaveCopyAs`), que se borra; sirve también con `--template`. Sobre la hoja de trabajo da E_FAIL |
+| anclaje | se compara el fondo fuente con el siguiente en tamaño | A4 contra A3: cada coordenada queda igual o corrida exactamente lo que crece la hoja (`metodo: "pareja"`). A1 no es un A2 trasladado (márgenes de 20 mm y rótulo más alto): ahí cada objeto va con la mitad de la hoja en la que cae (`metodo: "mitades"`); si un objeto corto cruzara el centro, como el rótulo de A4, no se genera |
+| mover | líneas: `SetStartPoint`/`SetEndPoint`; textos y globos: `Move` | |
+| asignar | `ActiveSheet.Background = <hoja nueva>` | |
+
+Resultado medido: PDF de A5 de 148,2 x 209,9 mm (rotado 90°) con todos los trazos entre 10 y 200 mm
+de largo y 10 y 138 mm de alto (marco a 10 mm del borde, como A4); PDF de A0 de 841 x 1189 mm con
+el marco a 20 mm (como A1). Lo fija el test `live` `test_vivo_draft_hojas.py`, que además mide el
+fondo por COM. Ninguna plantilla instalada trae A5 ni A0 (la ANSI Metric trae A a D). Si falla
+cualquier paso se borra la hoja nueva (`Sheet.Delete`) y la hoja queda sin fondo.
+
+Buscar un fondo inexistente con `Sheets.Item("A5-Sheet")` hace que Solid Edge responda
+RPC_E_SERVERFAULT (0x80010105); por eso se busca por nombre recorriendo la colección.
 
 ### `se draft parts-list` y `se draft dim`
 
@@ -978,7 +1012,7 @@ Validados el 2026-11-23 (croquis con arcos y relaciones 2D, el 2026-11-24) contr
 | PNG | `View.SaveAsImage(ruta, 1920, 1080)` (Draft: alto o ancho según la hoja) | verificado en pieza, chapa y ensamble (con `View.Fit()` antes); **corregido** en Draft: su `SheetWindow` no tiene `View`, `Fit` y `SaveAsImage` son de la ventana |
 | Draft nuevo | `Documents.Add("SolidEdge.DraftDocument")` | verificado (hoja A2 por defecto) |
 | Documento desde una plantilla | `Documents.Add(ProgID, ruta_de_plantilla)` | verificado (2026-11-25) en pieza y Draft; **corregido**: `Documents.Add(ruta_de_plantilla)` da 0x80020009 (scode CO_E_CLASSSTRING) |
-| Hoja | `ActiveSheet.SheetSetup.SheetSizeOption = igIso<A>Wide` | verificado; **corregido**: además hay que reemplazar el fondo (`ActiveSheet.Background = Sections.BackgroundSection.Sheets.Item("A3-Sheet")`) o el marco y el rotulo salen recortados |
+| Hoja | `ActiveSheet.SheetSetup.SheetSizeOption = igIso<A>Wide` | verificado; **corregido**: además hay que reemplazar el fondo (`ActiveSheet.Background = Sections.BackgroundSection.Sheets.Item("A3-Sheet")`) o el marco y el rotulo salen recortados; A5 y A0 se generan (ver "Fondo generado para A5 y A0") |
 | Enlace y vistas | `ModelLinks.Add(ruta)`; `DrawingViews.AddPartView`, `AddSheetMetalView`, `AddAssemblyView` con `(enlace, orientación, escala, x, y, 0)` | verificado: los tres existen y `x, y` es el centro de la vista; las vistas quedan dentro de la hoja y sin superponerse |
 | Caja del modelo | `Models.Item(1).Body.GetRange([0]*3, [0]*3)`; ensamble `Occurrence.GetRangeBox` | verificado (devuelve mínimo y máximo); la escala `auto` es razonable |
 | Lista de piezas y globos | `Draft.PartsLists.Add(vista, "", autoGlobos, 1)`; `PartsList.Rows.Count`, `Sheet.Balloons.Count` | verificado en la vista de un ensamble con dos ocurrencias iguales: 1 fila y 1 globo con `autoGlobos=1`, ninguno con 0; **diferencia con el MCP**: `PartsLists.Add` también acepta una vista de pieza (lista de una fila), por eso se valida `View.ModelLink.FileName` antes |

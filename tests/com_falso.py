@@ -60,6 +60,9 @@ ESCRITURAS = frozenset(
         "View.SaveAsImage",
         "SaveAsFlatDXFEx",
         "ModelLinks.Add",
+        "Sheets.AddSheet",
+        "Sheet.ReplaceBackground",
+        "Sheet.Delete",
         "SheetSetup.SheetSizeOption=",
         "DrawingViews.AddPartView",
         "DrawingViews.AddSheetMetalView",
@@ -129,8 +132,8 @@ class DocumentoFalso(_ConFallos):
         if tipo == 2:
             self.ModelLinks = EnlacesFalsos(self)
             self.ActiveSheet = HojaFalsa(self)
-            self.Sections = SeccionesFalsas()
-            self.Sheets = ColeccionFalsa([self.ActiveSheet])
+            self.Sections = SeccionesFalsas(self)
+            self.Sheets = HojasDelDraftFalsas(self, [self.ActiveSheet])
 
     @property
     def Dirty(self) -> bool:
@@ -285,21 +288,153 @@ class VistasDeDibujoFalsas(_ConFallos):
         return len(self.vistas)
 
 
+TIPO_LINEA_2D = 760091584
+TIPO_CAJA_DE_TEXTO = 2004510816
+TIPO_GLOBO = 384307874
+
+
+class LineaDeFondoFalsa:
+    """`Line2d` de un fondo: extremos que se leen y se escriben."""
+
+    Type = TIPO_LINEA_2D
+
+    def __init__(self, x1: float, y1: float, x2: float, y2: float) -> None:
+        self.inicio = (x1, y1)
+        self.fin = (x2, y2)
+
+    def GetStartPoint(self) -> tuple[float, float]:
+        return self.inicio
+
+    def GetEndPoint(self) -> tuple[float, float]:
+        return self.fin
+
+    def SetStartPoint(self, x: float, y: float) -> None:
+        self.inicio = (x, y)
+
+    def SetEndPoint(self, x: float, y: float) -> None:
+        self.fin = (x, y)
+
+    def copia(self) -> LineaDeFondoFalsa:
+        return LineaDeFondoFalsa(*self.inicio, *self.fin)
+
+
+class CajaDeFondoFalsa:
+    """Caja de texto o globo de un fondo: `Range` y `Move` (y `Text` si es texto)."""
+
+    def __init__(self, tipo: int, caja: tuple[float, float, float, float], texto=None) -> None:
+        self.Type = tipo
+        self.caja = caja
+        if texto is not None:
+            self.Text = texto
+
+    def Range(self, *_: float) -> tuple[float, float, float, float]:
+        return self.caja
+
+    def Move(self, xd: float, yd: float, xa: float, ya: float) -> None:
+        dx, dy = xa - xd, ya - yd
+        x1, y1, x2, y2 = self.caja
+        self.caja = (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
+
+    def copia(self) -> CajaDeFondoFalsa:
+        return CajaDeFondoFalsa(self.Type, self.caja, getattr(self, "Text", None))
+
+
+def contenido_de_fondo(nombre: str, ancho: float, alto: float) -> list:
+    """Fondo como el de la plantilla ISO: marco, rótulo abajo a la derecha (con el tamaño y un
+    globo) y tabla de revisiones arriba a la derecha. A1 tiene margen de 20 mm y un rótulo más alto
+    (no es un A2 trasladado); en A4 el rótulo empieza a la izquierda del centro."""
+    grande = nombre == "A1"
+    m = 0.020 if grande else 0.010
+    tw, th = (0.162, 0.0572) if grande else (0.14287, 0.0508)
+    x0, x1, y1 = ancho - m - tw, ancho - m, m + th
+    return [
+        LineaDeFondoFalsa(m, m, x1, m),
+        LineaDeFondoFalsa(x1, m, x1, alto - m),
+        LineaDeFondoFalsa(x1, alto - m, m, alto - m),
+        LineaDeFondoFalsa(m, alto - m, m, m),
+        LineaDeFondoFalsa(x0, m, x0, y1),
+        LineaDeFondoFalsa(x0, y1, x1, y1),
+        CajaDeFondoFalsa(
+            TIPO_CAJA_DE_TEXTO, (x0 + 0.0635, m + 0.0127, x0 + 0.073, m + 0.0197), nombre
+        ),
+        CajaDeFondoFalsa(
+            TIPO_CAJA_DE_TEXTO, (x0 + 0.0015, m + 0.0391, x0 + 0.022, m + 0.045), "DRAWN"
+        ),
+        CajaDeFondoFalsa(TIPO_GLOBO, (x0 + 0.065, m + 0.0057, x0 + 0.092, m + 0.0133)),
+        LineaDeFondoFalsa(x1 - 0.127, alto - m - 0.019, x1, alto - m - 0.019),
+        CajaDeFondoFalsa(
+            TIPO_CAJA_DE_TEXTO, (x1 - 0.127, alto - m - 0.0064, x1, alto - m), "REVISION"
+        ),
+    ]
+
+
+class TamanoDeFondoFalso:
+    """`SheetSetup` de una hoja de fondo."""
+
+    def __init__(self, ancho: float, alto: float) -> None:
+        self.SheetWidth, self.SheetHeight = ancho, alto
+        self._opcion = 0
+
+    @property
+    def SheetSizeOption(self) -> int:
+        return self._opcion
+
+    @SheetSizeOption.setter
+    def SheetSizeOption(self, valor: int) -> None:
+        self._opcion = valor
+        self.SheetWidth, self.SheetHeight = PAPEL_ISO_APAISADO[valor]
+
+
 class HojaDeFondoFalsa:
-    def __init__(self, nombre: str) -> None:
+    def __init__(self, nombre: str, seccion: SeccionDeFondosFalsa | None = None) -> None:
         self.Name = nombre
+        self.seccion = seccion
+        self.SheetSetup = TamanoDeFondoFalso(0.0, 0.0)
+        self.DrawingObjects = ColeccionFalsa([])
+        self.borrada = False
+
+    def ReplaceBackground(self, archivo: str, nombre: str) -> None:
+        """Copia en esta hoja el contenido del fondo `nombre` del archivo (acá, del documento)."""
+        assert self.seccion is not None
+        self.seccion.registro.append(("Sheet.ReplaceBackground", self.Name, nombre))
+        if self.seccion.falla_replace is not None:
+            raise self.seccion.falla_replace
+        if not os.path.exists(archivo):
+            raise com_error(0x80004005, "Error no especificado")
+        fuente = self.seccion.Sheets.Item(nombre)
+        self.DrawingObjects = ColeccionFalsa([o.copia() for o in fuente.DrawingObjects.elementos])
+
+    def Delete(self) -> None:
+        assert self.seccion is not None
+        self.seccion.registro.append(("Sheet.Delete", self.Name))
+        self.borrada = True
+        self.seccion.Sheets.elementos.remove(self)
 
 
 class SeccionDeFondosFalsa:
     """`Sections.BackgroundSection`: la plantilla ISO trae fondos de A4 a A1."""
 
-    def __init__(self) -> None:
-        self.Sheets = ColeccionFalsa([HojaDeFondoFalsa(f"A{n}-Sheet") for n in (4, 3, 2, 1)])
+    def __init__(self, doc: DocumentoFalso | None = None) -> None:
+        self.doc = doc
+        self._registro: list = []
+        self.falla_replace: BaseException | None = None
+        hojas = []
+        for n, opcion in ((4, 29), (3, 31), (2, 33), (1, 35)):
+            hoja = HojaDeFondoFalsa(f"A{n}-Sheet", self)
+            hoja.SheetSetup.SheetSizeOption = opcion
+            ancho, alto = PAPEL_ISO_APAISADO[opcion]
+            hoja.DrawingObjects = ColeccionFalsa(contenido_de_fondo(f"A{n}", ancho, alto))
+            hojas.append(hoja)
+        self.Sheets = ColeccionFalsa(hojas)
+
+    @property
+    def registro(self) -> list:
+        return self.doc.registro if self.doc is not None else self._registro
 
 
 class SeccionesFalsas:
-    def __init__(self) -> None:
-        self.BackgroundSection = SeccionDeFondosFalsa()
+    def __init__(self, doc: DocumentoFalso | None = None) -> None:
+        self.BackgroundSection = SeccionDeFondosFalsa(doc)
 
 
 class HojaFalsa:
@@ -367,6 +502,23 @@ class ColeccionFalsa:
                     return elemento
             raise com_error(0x80020009, "Excepción", f"No existe {clave}")
         return self.elementos[clave - 1]
+
+
+class HojasDelDraftFalsas(ColeccionFalsa):
+    """`DraftDocument.Sheets`: `AddSheet(nombre, igBackgroundSection)` crea una hoja de fondo."""
+
+    def __init__(self, doc: DocumentoFalso, hojas: list) -> None:
+        super().__init__(hojas)
+        self.doc = doc
+
+    def AddSheet(self, nombre: str, seccion: int, *_: Any) -> HojaDeFondoFalsa:
+        self.doc.registro.append(("Sheets.AddSheet", nombre, seccion))
+        self.doc._tocar("AddSheet")
+        assert seccion == 1
+        fondos = self.doc.Sections.BackgroundSection
+        hoja = HojaDeFondoFalsa(nombre, fondos)
+        fondos.Sheets.elementos.append(hoja)
+        return hoja
 
 
 class VariableFalsa:

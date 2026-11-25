@@ -3,6 +3,8 @@
 import pytest
 from com_falso import ColeccionFalsa, ModeloFalso, OcurrenciaFalsa, com_error
 
+from se_cli.core import fondos
+
 CAJA_CHICA = ((0.0, 0.0, 0.0), (0.02, 0.015, 0.01))
 
 
@@ -79,15 +81,136 @@ def test_vistas_elegidas_y_hoja(cli, app_falsa, tmp_path):
     assert sobre["data"]["escala"] == "2:1"
 
 
-@pytest.mark.parametrize("hoja", ["A5", "A0"])
-def test_hoja_sin_fondo_en_la_plantilla_sigue_sin_fondo(cli, app_falsa, tmp_path, hoja):
+def _draft_abierto(app):
+    return next(d for d in app.Documents._documentos if d.Type == 2)
+
+
+def _fondo(app, nombre):
+    return _draft_abierto(app).Sections.BackgroundSection.Sheets.Item(nombre)
+
+
+def _lineas(hoja):
+    return [
+        tuple(round(v, 5) for v in (*o.inicio, *o.fin))
+        for o in hoja.DrawingObjects.elementos
+        if hasattr(o, "inicio")
+    ]
+
+
+def _textos(hoja):
+    return {
+        o.Text: tuple(round(v, 5) for v in o.caja)
+        for o in hoja.DrawingObjects.elementos
+        if hasattr(o, "Text")
+    }
+
+
+@pytest.fixture
+def temporal(monkeypatch, tmp_path):
+    carpeta = tmp_path / "temporal"
+    carpeta.mkdir()
+    monkeypatch.setattr(fondos.tempfile, "gettempdir", lambda: str(carpeta))
+    return carpeta
+
+
+def test_a5_genera_el_fondo_desde_a4_anclado_con_a3(cli, app_falsa, tmp_path, temporal):
     modelo = _modelo(tmp_path)
 
-    r, sobre = cli("draft", "from-part", str(modelo), "--scale", "1:1", "--sheet", hoja)
+    r, sobre = cli(
+        "draft", "from-part", str(modelo), "--scale", "1:1", "--sheet", "A5", "--keep-open"
+    )
 
     assert r.exit_code == 0, r.output
-    assert sobre["data"]["hoja"]["fondo"] is None
+    hoja = sobre["data"]["hoja"]
+    assert hoja["fondo"] == "A5-Sheet"
+    assert hoja["fondo_generado"] == {
+        "desde": "A4-Sheet",
+        "metodo": "pareja",
+        "referencia": "A3-Sheet",
+        "objetos": 11,
+    }
+    assert _llamadas(app_falsa, "Sheets.AddSheet") == [("Sheets.AddSheet", "A5-Sheet", 1)]
+    assert _llamadas(app_falsa, "Sheet.ReplaceBackground") == [
+        ("Sheet.ReplaceBackground", "A5-Sheet", "A4-Sheet")
+    ]
+    assert _llamadas(app_falsa, "Sheet.Background=") == [("Sheet.Background=", "A5-Sheet")]
+    a5 = _fondo(app_falsa, "A5-Sheet")
+    assert (a5.SheetSetup.SheetWidth, a5.SheetSetup.SheetHeight) == (0.210, 0.148)
+    lineas = _lineas(a5)
+    # Marco a 10 mm del borde, estirado a la hoja nueva.
+    assert lineas[:4] == [
+        (0.01, 0.01, 0.2, 0.01),
+        (0.2, 0.01, 0.2, 0.138),
+        (0.2, 0.138, 0.01, 0.138),
+        (0.01, 0.138, 0.01, 0.01),
+    ]
+    # El rótulo (que en A4 empieza a la izquierda del centro) se traslada entero.
+    assert lineas[4] == (round(0.2 - 0.14287, 5), 0.01, round(0.2 - 0.14287, 5), 0.0608)
+    # La tabla de revisiones sigue pegada arriba a la derecha.
+    assert lineas[6] == (0.073, 0.119, 0.2, 0.119)
+    textos = _textos(a5)
+    assert "A4" not in textos and textos["A5"][0] == round(0.2 - 0.14287 + 0.0635, 5)
+    assert textos["REVISION"][3] == 0.138
+    # El A4 de la plantilla queda como estaba y no queda la copia temporal.
+    assert _textos(_fondo(app_falsa, "A4-Sheet"))["A4"][0] == round(0.287 - 0.14287 + 0.0635, 5)
+    assert list(temporal.iterdir()) == []
+
+
+def test_a0_genera_el_fondo_desde_a1_por_mitades(cli, app_falsa, tmp_path, temporal):
+    modelo = _modelo(tmp_path)
+
+    r, sobre = cli(
+        "draft", "from-part", str(modelo), "--scale", "1:1", "--sheet", "A0", "--keep-open"
+    )
+
+    assert r.exit_code == 0, r.output
+    assert sobre["data"]["hoja"]["fondo"] == "A0-Sheet"
+    assert sobre["data"]["hoja"]["fondo_generado"] == {
+        "desde": "A1-Sheet",
+        "metodo": "mitades",
+        "referencia": None,
+        "objetos": 11,
+    }
+    a0 = _fondo(app_falsa, "A0-Sheet")
+    assert _lineas(a0)[:2] == [(0.02, 0.02, 1.169, 0.02), (1.169, 0.02, 1.169, 0.821)]
+    textos = _textos(a0)
+    assert textos["A0"][0] == round(1.169 - 0.162 + 0.0635, 5)
+    assert textos["DRAWN"][1] == round(0.02 + 0.0391, 5)
+    assert list(temporal.iterdir()) == []
+
+
+def test_fallo_al_generar_el_fondo_deja_la_hoja_sin_fondo(cli, app_falsa, tmp_path, temporal):
+    modelo = _modelo(tmp_path)
+    original = app_falsa.Documents.Add
+
+    def add(*args):
+        doc = original(*args)
+        if doc.Type == 2:
+            doc.Sections.BackgroundSection.falla_replace = com_error(0x80004005, "Error")
+        return doc
+
+    app_falsa.Documents.Add = add
+
+    r, sobre = cli("draft", "from-part", str(modelo), "--scale", "1:1", "--sheet", "A5")
+
+    assert r.exit_code == 0, r.output
+    hoja = sobre["data"]["hoja"]
+    assert hoja["fondo"] is None and "A5-Sheet" in hoja["fondo_error"]
+    assert "fondo_generado" not in hoja
+    assert _llamadas(app_falsa, "Sheet.Delete") == [("Sheet.Delete", "A5-Sheet")]
     assert _llamadas(app_falsa, "Sheet.Background=") == []
+    assert (tmp_path / "Pieza.dft").exists()
+    assert list(temporal.iterdir()) == []
+
+
+@pytest.mark.parametrize("hoja", ["A4", "A3", "A2", "A1"])
+def test_hojas_con_fondo_en_la_plantilla_no_generan_nada(cli, app_falsa, tmp_path, hoja):
+    r, sobre = cli("draft", "from-part", str(_modelo(tmp_path)), "--scale", "1:1", "--sheet", hoja)
+
+    assert r.exit_code == 0, r.output
+    assert sobre["data"]["hoja"]["fondo"] == f"{hoja}-Sheet"
+    assert "fondo_generado" not in sobre["data"]["hoja"]
+    assert _llamadas(app_falsa, "Sheets.AddSheet") == []
 
 
 @pytest.mark.parametrize(
