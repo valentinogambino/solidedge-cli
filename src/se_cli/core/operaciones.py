@@ -110,8 +110,45 @@ def indice_de_operacion(doc: Any, nombre: str) -> int | None:
     return None
 
 
-def _es_sincronico(doc: Any) -> bool:
-    return opcional(lambda: int(doc.ModelingMode)) == constante("seModelingModeSynchronous")
+_SINCRONICO = constante("seModelingModeSynchronous")
+
+# Lo que se probó en vivo (Solid Edge 2026 226.00.01.04, 2026-11-25) en una chapa sincrónica con
+# Tab y Flange, para dejarlo en `details` y no volver a probarlo.
+PROBADO_EN_SINCRONICO = (
+    "Feature.Suppress (leer y escribir): 0x80020009, scode interno 0x80004021",
+    "DesignEdgebarFeatures.Item(i).Suppress = True: 0x80020009, scode interno 0x80004021",
+    "Feature.SuppressVariable.Suppress = True y .Value = 1, con Recompute: se aceptan sin error "
+    "pero se ignoran (releen False y 0, el volumen no cambia); en modo ordenado sí suprimen",
+)
+
+PISTA_SINCRONICO = (
+    "La API de Solid Edge solo suprime operaciones ordenadas. La CLI no pasa el documento a modo "
+    "ordenado (cambia cómo se edita todo el modelo): si hace falta, hacelo en Solid Edge."
+)
+
+
+def _es_sincronica(doc: Any, feature: Any) -> bool:
+    """Si la operación es sincrónica: su `ModelingModeType` o, si no lo da, el modo del documento.
+
+    Un documento sincrónico puede tener operaciones ordenadas; cada operación informa la suya.
+    """
+    modo = opcional(lambda: int(feature.ModelingModeType))
+    if modo is None:
+        modo = opcional(lambda: int(doc.ModelingMode))
+    return modo == _SINCRONICO
+
+
+def _no_soportado_en_sincronico(nombre: str, suprimir: bool) -> NoSoportado:
+    return NoSoportado(
+        f"Solid Edge no deja {'suprimir' if suprimir else 'reactivar'} {nombre!r} por la API: es "
+        "una operación sincrónica.",
+        details={
+            "modo": "sincronico",
+            "operacion": nombre,
+            "probado": list(PROBADO_EN_SINCRONICO),
+            "hint": PISTA_SINCRONICO,
+        },
+    )
 
 
 def cambiar_supresion(doc: Any, selector: str, suprimir: bool) -> dict[str, Any]:
@@ -126,18 +163,17 @@ def cambiar_supresion(doc: Any, selector: str, suprimir: bool) -> dict[str, Any]
     antes = _describir(indice, feature)
     if antes["suprimida"] is suprimir:
         return {**antes, "changed": False}
+    if opcional(lambda: int(feature.ModelingModeType)) == _SINCRONICO:
+        # No se intenta: ver PROBADO_EN_SINCRONICO.
+        raise _no_soportado_en_sincronico(antes["nombre"], suprimir)
     try:
         leer(lambda: setattr(feature, "Suppress", suprimir))
     except Exception as error:
-        # Verificado en vivo (2026-11-24): en una chapa en modo sincrónico `Suppress` falla con
-        # un error COM genérico (0x80020009) en Tab y Flange; en ordenado funciona.
-        if not isinstance(traducir(error), ErrorCom) or not _es_sincronico(doc):
+        # Verificado en vivo (2026-11-24 y 2026-11-25): en una chapa sincrónica `Suppress` falla
+        # con un error COM genérico (0x80020009) en Tab y Flange; en ordenado funciona.
+        if not isinstance(traducir(error), ErrorCom) or not _es_sincronica(doc, feature):
             raise
-        raise NoSoportado(
-            f"Solid Edge no deja {'suprimir' if suprimir else 'reactivar'} {antes['nombre']!r} "
-            "con el documento en modo sincrónico. Pasalo a modo ordenado en Solid Edge.",
-            details={"modo": "sincronico", "operacion": antes["nombre"]},
-        ) from error
+        raise _no_soportado_en_sincronico(antes["nombre"], suprimir) from error
     despues = _describir(indice, feature)
     if despues["suprimida"] is not suprimir:
         raise ErrorCom(

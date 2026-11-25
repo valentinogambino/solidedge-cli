@@ -134,6 +134,13 @@ def test_suppress_en_chapa_ordenada_funciona_y_en_sincronica_da_exit_6(tmp_path)
         r, sobre = _correr("features", "suppress", "Flange_1", "--doc", sincronica.name)
         assert r.exit_code == 6 and sobre["error"]["code"] == "no_soportado", sobre
         assert sobre["error"]["details"]["modo"] == "sincronico"
+        assert any("SuppressVariable" in p for p in sobre["error"]["details"]["probado"])
+        for operacion in ("Tab_1", "Flange_1"):
+            r, sobre = _correr("features", "unsuppress", operacion, "--doc", sincronica.name)
+            # `Status` dice ok, así que ya está activa: no se escribe nada.
+            assert r.exit_code == 0 and sobre["data"]["changed"] is False, sobre
+            r, sobre = _correr("features", "suppress", operacion, "--doc", sincronica.name)
+            assert r.exit_code == 6 and sobre["error"]["details"]["operacion"] == operacion, sobre
     finally:
         _cerrar(ordenada.name)
         _cerrar(sincronica.name)

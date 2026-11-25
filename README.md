@@ -340,9 +340,22 @@ no existe da exit 5; un documento que no es pieza ni chapa, exit 2. Son idempote
 ya está en el estado pedido no se escribe nada y `changed` es `false`. `suprimida` y `estado` son lo
 que Solid Edge informa después de escribir (si no coincide con lo pedido, exit 4). La supresión
 cambia el modelo: `se mass` ya no cuenta una operación suprimida.
-En una **chapa en modo sincrónico** Solid Edge rechaza `Suppress` (verificado en vivo con `Tab` y
-`Flange`, error COM genérico 0x80020009): el comando da exit 6 (`no_soportado`, `details.modo`
-`sincronico`). En modo ordenado suprimir y reactivar un `Tab` funciona y `se mass` pasa a 0 y vuelve.
+En modo ordenado suprimir y reactivar un `Tab` funciona y `se mass` pasa a 0 y vuelve. Una
+**operación sincrónica** no se puede suprimir por la API: el comando da exit 6 (`no_soportado`) con
+`details.modo: "sincronico"`, `operacion`, `probado` (lo que se intentó) y `hint`. Se decide por el
+`ModelingModeType` de la operación (1 = sincrónica: no se intenta escribir); si no lo informa, por
+el modo del documento después de que `Suppress` falle. Una operación ordenada dentro de un documento
+sincrónico se suprime normalmente. La CLI no pasa el documento a modo ordenado.
+
+Evidencia (en vivo, 2026-11-25, chapa sincrónica con `Tab_1` y `Flange_1`; cerrado como imposible):
+
+| llamada | resultado |
+|---|---|
+| `Feature.Suppress` (leer) y `Feature.Suppress = True` | 0x80020009, scode interno 0x80004021 |
+| `DesignEdgebarFeatures.Item(i).Suppress = True` | 0x80020009, scode interno 0x80004021 (los planos: "can not be set") |
+| `Feature.SuppressVariable.Suppress = True` y `.Value = 1`, más `Document.Recompute` y `Model.Recompute` | sin error, pero ignorado: relee `False` y `0.0`, `Status` sigue ok y el volumen no cambia. En una chapa ordenada lo mismo suprime el corte (el volumen vuelve al del Tab) |
+| `ModelingModeType` | 1 en las operaciones sincrónicas, 2 en las ordenadas |
+| `Model` y `SheetMetalDocument` | no tienen otro miembro para suprimir (solo `Delete*`, `Recompute` y `RollToFeature`) |
 
 ## Modelado básico (F5)
 
@@ -909,7 +922,7 @@ Validados el 2026-11-23 (croquis con arcos y relaciones 2D, el 2026-11-24) contr
 | `ComputePhysicalPropertiesWithSpecifiedDensity` | pieza y chapa, kwargs con buffers | verificado (cubo 50 mm, 7850 kg/m3: 0.98125 kg) |
 | masa de un ensamble | `doc.ComputePhysicalPropertiesWithSpecifiedDensity` | **corregido**: no existe; se usa `PhysicalProperties.Update()` + `GetAssemblyPhysicalProperties()` (sin densidad ni área) |
 | `Occurrence`, `GetRangeBox`, `Features` | `asm tree`, `features list` | verificado; leer `Features.Count` ensucia el documento |
-| `Feature.Suppress = True/False` | `features suppress`, `features unsuppress` | verificado en pieza ordenada con extrusión y corte; el `Status` pasa a `suppressed` y vuelve a `ok`, y la masa deja de contar la operación |
+| `Feature.Suppress = True/False` | `features suppress`, `features unsuppress` | verificado en pieza ordenada con extrusión y corte; el `Status` pasa a `suppressed` y vuelve a `ok`, y la masa deja de contar la operación; en una operación sincrónica no hay forma (ver `features suppress`) |
 | `Occurrences.AddByFilename(ruta)` / `AddWithTransform(ruta, x, y, z, rx, ry, rz)` | `asm add` | verificado en ensamble nuevo guardado con una caja extruida; posición en metros, ángulos de Euler en radianes; el MCP usa además `AddWithMatrix`, que no hace falta |
 | `Occurrence.GetTransform()` / `PutTransform(x, y, z, rx, ry, rz)` | `asm add`, `asm move` | verificado: la terna que devuelve `GetTransform` es la que acepta `PutTransform` (ida y vuelta exacta, también con rotaciones en X, Y y Z a la vez) |
 | `Occurrence.Move(dx, dy, dz)` | `asm move --by` | verificado: suma a la posición sin tocar los ángulos |
