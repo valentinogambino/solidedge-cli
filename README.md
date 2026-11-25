@@ -321,12 +321,36 @@ se --json asm relations delete 2
 
 ```powershell
 se --json features list
-# {"ok": true, "data": {"cantidad": 2, "operaciones": [{"indice": 1, "nombre": "ExtrudedProtrusion_1", "tipo": "ExtrudedProtrusion", "suprimida": false, "estado": "ok"}, {"indice": 2, "nombre": "ExtrudedCutout_1", "tipo": "ExtrudedCutout", "suprimida": true, "estado": "suppressed"}]}, "error": null}
+# {"ok": true, "data": {"cantidad": 2, "operaciones": [{"indice": 1, "nombre": "ExtrudedProtrusion_1", "tipo": "ExtrudedProtrusion", "suprimida": false, "estado": "ok"}, {"indice": 2, "nombre": "ExtrudedCutout_1", "tipo": "ExtrudedCutout", "suprimida": true, "estado": "suppressed"}], "modificado_por_lectura": false}, "error": null}
 ```
 `indice` es 1-based. `tipo` sale de `FeatureTypeConstants` (el entero si no tiene nombre). Solo
-pieza y chapa: otro tipo da exit 2. Solid Edge marca el documento como modificado (`Dirty`) apenas
-se lee `Features.Count`, y `Dirty` no se puede limpiar: después de `features list` un `docs close`
-sin flags se niega y pide `--save` o `--discard`.
+pieza y chapa: otro tipo da exit 2.
+
+`modificado_por_lectura` dice si el documento estaba limpio y quedó marcado como modificado
+(`Dirty`) por la lectura (`null` si `Dirty` no se pudo leer). Con `true` sale además una
+`advertencia`: después de eso `docs close` sin flags pide `--save` o `--discard`, y `--discard` no
+pierde nada que no estuviera ya en el archivo. Un documento que ya tenía cambios da `false`.
+
+Pasa solo con algunos archivos y una sola vez: con los `.par` guardados por el smoke del
+2026-11-23 sí; con piezas y chapas hechas por la CLI el 2026-11-25, guardadas y reabiertas, no
+(tampoco en una pieza sincrónica vacía). Una vez que Solid Edge guarda el archivo, leerlo ya no
+lo marca. La causa no se pudo determinar. Evidencia (en vivo, 2026-11-25, reabriendo el archivo
+entre cada paso; cerrado como imposible de evitar):
+
+| llamada | `Dirty` después (antes: `false`) |
+|---|---|
+| `Models`, `Models.Count`, `Models.Item(1)`, `Model.Features` (el objeto) | `false` |
+| `Model.Features.Count`, `Features.Item(1)` y cualquier propiedad de una operación | `true` |
+| `Model.ExtrudedProtrusions.Count` | `false` |
+| `Model.ExtrudedProtrusions.Item(1).Name` | `true` |
+| `DesignEdgebarFeatures` (el objeto) / `.Count` / `.Item(1).Name` | `false` / `true` / `true` |
+| `Body.Volume`, `Body.Faces(igQueryAll).Count`, `ProfileSets.Count`, `RefPlanes.Count`, `Variables.Count` | `false` |
+| `Model.Recompute()` | `true` |
+| `doc.Dirty = False` (o `0`) después | E_FAIL (0x80004005), sigue `true` |
+| `doc.Undo()` después | sin error, sigue `true` (y el modelo no cambia) |
+
+No hay una lista de operaciones que no pase por instanciarlas, así que la CLI no lo evita: lo
+informa. No marca limpio el documento ni deshace nada.
 
 ```powershell
 se --json features suppress 2        # por índice (el de `features list`) o por nombre
@@ -921,7 +945,7 @@ Validados el 2026-11-23 (croquis con arcos y relaciones 2D, el 2026-11-24) contr
 | `GetUserPhysicalProperties` | masa sin densidad | **corregido**: solo devuelve valores cargados a mano; se usa `Model.GetPhysicalProperties` |
 | `ComputePhysicalPropertiesWithSpecifiedDensity` | pieza y chapa, kwargs con buffers | verificado (cubo 50 mm, 7850 kg/m3: 0.98125 kg) |
 | masa de un ensamble | `doc.ComputePhysicalPropertiesWithSpecifiedDensity` | **corregido**: no existe; se usa `PhysicalProperties.Update()` + `GetAssemblyPhysicalProperties()` (sin densidad ni área) |
-| `Occurrence`, `GetRangeBox`, `Features` | `asm tree`, `features list` | verificado; leer `Features.Count` ensucia el documento |
+| `Occurrence`, `GetRangeBox`, `Features` | `asm tree`, `features list` | verificado; en algunos archivos enumerar las operaciones ensucia el documento una vez (ver `features list`, `modificado_por_lectura`) |
 | `Feature.Suppress = True/False` | `features suppress`, `features unsuppress` | verificado en pieza ordenada con extrusión y corte; el `Status` pasa a `suppressed` y vuelve a `ok`, y la masa deja de contar la operación; en una operación sincrónica no hay forma (ver `features suppress`) |
 | `Occurrences.AddByFilename(ruta)` / `AddWithTransform(ruta, x, y, z, rx, ry, rz)` | `asm add` | verificado en ensamble nuevo guardado con una caja extruida; posición en metros, ángulos de Euler en radianes; el MCP usa además `AddWithMatrix`, que no hace falta |
 | `Occurrence.GetTransform()` / `PutTransform(x, y, z, rx, ry, rz)` | `asm add`, `asm move` | verificado: la terna que devuelve `GetTransform` es la que acepta `PutTransform` (ida y vuelta exacta, también con rotaciones en X, Y y Z a la vez) |

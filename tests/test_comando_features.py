@@ -1,7 +1,7 @@
 """`se features list` sobre el COM falso."""
 
 import pytest
-from com_falso import ColeccionFalsa, FeatureFalsa, ModeloFalso, PlanoRefFalso
+from com_falso import ColeccionFalsa, FeatureFalsa, ModeloFalso, PlanoRefFalso, com_error
 
 EXTRUSION = 462094706
 CORTE = 462094714
@@ -56,6 +56,7 @@ def test_list_con_suprimidas(cli, con_features):
                 "estado": "failed",
             },
         ],
+        "modificado_por_lectura": False,
     }
     assert con_features.escrituras == []
 
@@ -69,7 +70,11 @@ def test_chapa_es_soportada(cli, app_falsa):
 def test_sin_features_lista_vacia(cli, app_falsa):
     _pieza(app_falsa, [])
     r, sobre = cli("features", "list")
-    assert r.exit_code == 0 and sobre["data"] == {"cantidad": 0, "operaciones": []}
+    assert r.exit_code == 0 and sobre["data"] == {
+        "cantidad": 0,
+        "operaciones": [],
+        "modificado_por_lectura": False,
+    }
 
 
 def test_modo_sincronico_cae_al_pathfinder_sin_planos(cli, app_falsa):
@@ -86,6 +91,58 @@ def test_modo_sincronico_cae_al_pathfinder_sin_planos(cli, app_falsa):
     assert r.exit_code == 0
     assert [o["nombre"] for o in sobre["data"]["operaciones"]] == ["ExtrudedProtrusion_1"]
     assert sobre["data"]["operaciones"][0]["indice"] == 1
+
+
+class FeaturesQueEnsucian(ColeccionFalsa):
+    """Como en vivo con un archivo viejo: contar las operaciones marca `Dirty`."""
+
+    def __init__(self, doc, elementos):
+        super().__init__(elementos)
+        self.doc = doc
+
+    @property
+    def Count(self) -> int:
+        self.doc._sucio = True
+        return len(self.elementos)
+
+
+def _pieza_que_se_ensucia(app, sucio=False):
+    doc = app.agregar_documento("Viejo.par", ruta=r"C:\p\Viejo.par", sucio=sucio)
+    modelo = ModeloFalso(doc, [])
+    modelo.Features = FeaturesQueEnsucian(doc, [FeatureFalsa("ExtrudedProtrusion_1", EXTRUSION)])
+    doc.Models = ColeccionFalsa([modelo])
+    return doc
+
+
+def test_lectura_que_ensucia_se_informa_sin_escribir(cli, app_falsa):
+    _pieza_que_se_ensucia(app_falsa)
+
+    r, sobre = cli("features", "list")
+
+    assert r.exit_code == 0
+    assert sobre["data"]["cantidad"] == 1
+    assert sobre["data"]["modificado_por_lectura"] is True
+    assert "--discard" in sobre["data"]["advertencia"]
+    # No intenta limpiar `Dirty` (en vivo da E_FAIL) ni deshacer nada.
+    assert app_falsa.escrituras == []
+
+
+def test_documento_ya_modificado_no_se_atribuye_a_la_lectura(cli, app_falsa):
+    _pieza_que_se_ensucia(app_falsa, sucio=True)
+
+    _, sobre = cli("features", "list")
+
+    assert sobre["data"]["modificado_por_lectura"] is False
+    assert "advertencia" not in sobre["data"]
+
+
+def test_dirty_ilegible_da_null(cli, app_falsa):
+    doc = _pieza_que_se_ensucia(app_falsa)
+    doc.fallar("Dirty", com_error(0x80020009, "Excepción"))
+
+    r, sobre = cli("features", "list")
+
+    assert r.exit_code == 0 and sobre["data"]["modificado_por_lectura"] is None
 
 
 @pytest.mark.parametrize("tipo", [2, 3, 6])

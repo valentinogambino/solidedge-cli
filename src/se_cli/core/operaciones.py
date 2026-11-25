@@ -75,11 +75,40 @@ def _todas(doc: Any) -> list[Any]:
     return _de_modelos(doc) or _de_edgebar(doc)
 
 
+AVISO_MODIFICADO_POR_LECTURA = (
+    "Solid Edge marcó el documento como modificado al leer sus operaciones: no hay cambios en el "
+    "modelo, pero `Dirty` no se puede limpiar por la API. `se docs close` va a pedir --save o "
+    "--discard; con --discard no se pierde nada que no estuviera ya en el archivo."
+)
+
+
+def _sucio(doc: Any) -> bool | None:
+    valor = opcional(lambda: doc.Dirty)
+    return None if valor is None else bool(valor)
+
+
 def listar(doc: Any) -> dict[str, Any]:
-    """Operaciones en orden: `{indice (1-based), nombre, tipo, suprimida, estado}`."""
+    """Operaciones en orden: `{indice (1-based), nombre, tipo, suprimida, estado}`.
+
+    Verificado en vivo (2026-11-25): en algunos archivos (los guardados por el smoke del
+    2026-11-23) enumerar cualquier colección de operaciones (`Features.Count`, `Item(i)` de
+    `ExtrudedProtrusions`, `DesignEdgebarFeatures.Count`) pasa `Dirty` de False a True; no hay
+    forma de leerlas sin eso ni de volver atrás (`Dirty = False` da E_FAIL y `Undo()` no lo
+    limpia). Se informa en `modificado_por_lectura` en vez de esconderlo.
+    """
     exigir_tipo(doc, TIPOS_SOPORTADOS, "features list")
+    antes = _sucio(doc)
     lista = [_describir(i, f) for i, f in enumerate(_todas(doc), start=1)]
-    return {"cantidad": len(lista), "operaciones": lista}
+    despues = _sucio(doc)
+    por_lectura = None if antes is None or despues is None else (not antes and despues)
+    resultado: dict[str, Any] = {
+        "cantidad": len(lista),
+        "operaciones": lista,
+        "modificado_por_lectura": por_lectura,
+    }
+    if por_lectura:
+        resultado["advertencia"] = AVISO_MODIFICADO_POR_LECTURA
+    return resultado
 
 
 def _buscar(features: list[Any], selector: str) -> tuple[int, Any]:
