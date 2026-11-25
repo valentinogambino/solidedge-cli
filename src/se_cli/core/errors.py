@@ -29,6 +29,8 @@ RPC_S_SERVER_UNAVAILABLE = 0x800706BA
 RPC_E_DISCONNECTED = 0x80010108
 MK_E_UNAVAILABLE = 0x800401E3
 
+# Códigos estándar de un servidor COM que rechaza llamadas. Contra Solid Edge 2026 no se pudieron
+# provocar (2026-11-25: con diálogos modales y llamadas largas atiende o encola; ver el README).
 HRESULTS_OCUPADO = frozenset({RPC_E_CALL_REJECTED, RPC_E_SERVERCALL_RETRYLATER})
 HRESULTS_DESCONECTADO = frozenset({RPC_S_SERVER_UNAVAILABLE, RPC_E_DISCONNECTED})
 
