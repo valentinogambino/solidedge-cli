@@ -16,6 +16,7 @@ Reglas de seguridad:
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -123,8 +124,14 @@ class _Lector:
             self.pos = coincidencia.end()
             numero = coincidencia.group(0)
             if re.fullmatch(r"[+-]?\d+", numero):
-                return int(numero)
-            return float(numero)
+                try:
+                    return int(numero)
+                except ValueError:
+                    raise self.error("entero fuera de rango") from None
+            valor = float(numero)
+            if not math.isfinite(valor):
+                raise self.error("se esperaba un número finito")
+            return valor
         for palabra, valor in (("true", True), ("false", False), ("null", None)):
             fin = self.pos + len(palabra)
             if self.texto.startswith(palabra, self.pos) and not (
