@@ -1183,6 +1183,9 @@ no se serializan (solo datos planos).
 
 `uv run pytest` usa un COM falso y no necesita Solid Edge. Las pruebas con la marca `live`
 necesitan Solid Edge abierto y no corren por defecto: `uv run pytest -m live`.
+Hay 54 pruebas `live`; 5 de ellas (`tests/test_vivo_timeout.py`) abren un diálogo modal en Solid Edge
+y no corren con `uv run pytest -m live` salvo que se defina `SE_LIVE_MODAL=1`. Avisá antes de
+correrlas: el diálogo queda visible unos segundos. Las pruebas unitarias son 1165.
 `src/se_cli/core/constants.py` se regenera con `uv run python scripts/gen_constants.py`.
 
 ## Extensión para Claude Desktop (.mcpb)
@@ -1203,6 +1206,8 @@ de extensiones**, elegí **Instalar extensión…**, seleccioná el archivo `.mc
 y confirmá la instalación. En la configuración de la extensión, seleccioná
 el ejecutable de **Python 3.11 x64**. Si instalaste Python con `uv`, podés
 obtener la ruta con `uv python find --system 3.11`.
+La opción **Timeout (s)** (por defecto 120) fija cuánto espera cada herramienta a Solid Edge; ver
+"Timeout" más abajo.
 
 [Guía oficial de instalación de extensiones locales](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop).
 
