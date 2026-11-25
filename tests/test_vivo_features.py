@@ -69,3 +69,27 @@ def test_suprimir_y_reactivar_una_extrusion(tmp_path):
         assert r.exit_code == 5
         r, _ = _correr("features", "suppress", "999", *d)
         assert r.exit_code == 5
+
+
+@pytest.mark.live
+def test_features_list_informa_si_la_lectura_ensucio(tmp_path):
+    """`modificado_por_lectura` coincide con lo que `docs list` ve después de leer."""
+    destino = tmp_path / "leer.par"
+    with _pieza_propia(destino) as doc:
+        d = ["--doc", doc]
+        assert (
+            _correr("sketch", "rect", "--width", "50mm", "--height", "30mm", *d)[0].exit_code == 0
+        )
+        assert _correr("extrude", "10mm", *d)[0].exit_code == 0
+        assert _correr("docs", "save", doc)[0].exit_code == 0
+        assert _correr("docs", "close", doc)[0].exit_code == 0
+        assert _correr("docs", "open", str(destino))[0].exit_code == 0
+
+        r, sobre = _correr("features", "list", *d)
+        assert r.exit_code == 0, sobre
+        _, lista = _correr("docs", "list")
+        modificado = next(x for x in lista["data"]["documentos"] if x["nombre"] == doc)[
+            "modificado"
+        ]
+        assert sobre["data"]["modificado_por_lectura"] is modificado
+        assert ("advertencia" in sobre["data"]) is modificado
