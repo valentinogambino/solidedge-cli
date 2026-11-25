@@ -1125,8 +1125,8 @@ da exit 2. Sin flag ni variable, la CLI espera sin límite; el servidor MCP usa 
 
 - **Qué mide:** inactividad, no la duración total. El reloj se reinicia al empezar cada llamada
   COM, así que un comando largo hecho de muchas llamadas cortas (un lote de `export`) no vence. Una
-  sola llamada que tarde más que el plazo sí se corta (en esta máquina `docs new part` tarda más de
-  5 s): en ese caso subí el `--timeout`.
+  sola llamada que tarde más que el plazo sí se corta: en ese caso subí el `--timeout`. Ver
+  "Cuánto tarda crear un documento" más abajo.
 - **Qué pasa al vencer:** se pide la cancelación de la llamada en curso (`CoCancelCall`). Si
   vuelve dentro de 5 s, el comando termina con exit 7 y `details.cancelacion: "cancelada"`; el hilo
   COM y la conexión siguen sirviendo (en MCP, la llamada siguiente del mismo servidor responde). Si
@@ -1153,6 +1153,32 @@ exit 7 a los 6,8 s (cancelada) y a los 7,3 s (abandonada, sin gracia), sin queda
 archivo de destino queda intacto. Habilitar la cancelación no tiene costo medible (500 lecturas de
 `Application.Version`: cociente 0,9 a 1,3 según la corrida). `se com invoke` apaga `DisplayAlerts`,
 así que no abre ese diálogo.
+
+#### Cuánto tarda crear un documento
+
+`se docs new` es una sola llamada COM, `Documents.Add`, y el tiempo es de Solid Edge (crea el
+documento desde la plantilla): la CLI no hace trabajo extra que valga la pena sacar. Medido el
+2026-11-25 (Solid Edge 226.00.01.04, tres corridas por tipo, sin otros documentos abiertos y con 6
+abiertos: no cambia):
+
+| tipo | `Documents.Add` | `se docs new` de punta a punta |
+|---|---|---|
+| `part` | 1,6 a 1,9 s (2,0 s la primera vez) | 2,7 a 2,9 s |
+| `sheetmetal` | 1,4 a 1,5 s | 2,5 a 2,6 s |
+| `assembly` | 2,2 a 2,4 s | 3,5 a 3,8 s |
+| `draft` | 1,0 a 1,1 s | 2,1 a 2,3 s |
+
+De ese total, 0,75 s son el arranque de Python y `uv` (`se status` tarda lo mismo), y la CLI gasta
+menos de 0,3 s en describir el documento nuevo. Una corrida anterior vio más de 5 s para `part`; no
+se repitió, y lo esperable es que pase con Solid Edge recién abierto o cargado. **Recomendación:**
+para `docs new` un `--timeout` de 30 s como mínimo (el servidor MCP ya usa 120).
+Con `--timeout 5` funciona en esta máquina, pero con poco margen.
+
+**Documento huérfano:** `Documents.Add` no se puede cancelar a la mitad. Con `--timeout 1`,
+`se docs new part` salió con exit 7 (`cancelacion: "cancelada"`, `esperado_s: 1.8`): `CoCancelCall`
+recién volvió cuando Solid Edge terminó de crear el documento, y el documento quedó abierto. Un
+timeout en `docs new` no quiere decir que no se creó nada: revisá con `se docs list` y cerrá el
+sobrante con `se docs close <nombre> --discard`.
 
 ## Forma de `--json`
 
