@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import contextlib
+import math
+import os
+import sys
 from collections.abc import Callable
+from functools import cache
 from threading import Lock
 from typing import Annotated, Any, Literal
 
@@ -63,6 +67,34 @@ Doc = Annotated[
 Units = Annotated[str | None, Field(description="Unidades de salida, ej. mm,deg. Por defecto, SI.")]
 
 
+Timeout = Annotated[
+    float | None,
+    Field(
+        gt=0,
+        le=3600,
+        description=(
+            "Segundos máximos de espera por llamada a Solid Edge. "
+            "Por defecto, el del servidor (120)."
+        ),
+    ),
+]
+
+
+@cache
+def _plazo_del_servidor() -> float:
+    valor = os.environ.get("SE_TIMEOUT")
+    if valor is None:
+        return 120
+    try:
+        plazo = float(valor)
+        if math.isfinite(plazo) and 0 < plazo <= 3600:
+            return plazo
+    except ValueError:
+        pass
+    print("SE_TIMEOUT inválido: se usa el timeout de 120 s.", file=sys.stderr)
+    return 120
+
+
 class Sobre(TypedDict):
     ok: bool
     data: Any
@@ -88,10 +120,11 @@ def _respuesta():
             sobre["error"].pop("details", None)
 
 
-def _sesion(fn: Callable[[Sesion], Any]) -> Any:
+def _sesion(fn: Callable[[Sesion], Any], timeout: float | None) -> Any:
     # La supresión de alertas abarca varias llamadas al STA. Serializá la operación completa.
     with _candado:
-        sesion = Sesion()
+        resuelto = _plazo_del_servidor() if timeout is None else timeout
+        sesion = Sesion(plazo=resuelto)
         try:
             return fn(sesion)
         finally:
@@ -99,7 +132,7 @@ def _sesion(fn: Callable[[Sesion], Any]) -> Any:
                 sesion.cerrar()
 
 
-def _llamar(fn: Callable[[Any], Any], *, sin_alertas: bool = False) -> Any:
+def _llamar(fn: Callable[[Any], Any], timeout: float | None, *, sin_alertas: bool = False) -> Any:
     def correr(sesion: Sesion) -> Any:
         sesion.conectar()
         if sin_alertas:
@@ -107,58 +140,60 @@ def _llamar(fn: Callable[[Any], Any], *, sin_alertas: bool = False) -> Any:
                 return sesion.llamar(fn, reintentar_todo=False)
         return sesion.llamar(fn)
 
-    return _sesion(correr)
+    return _sesion(correr, timeout)
 
 
 @mcp.tool()
-def status() -> Sobre:
+def status(timeout: Timeout = None) -> Sobre:
     """Consultá si Solid Edge está abierto y qué documento está activo."""
     with _respuesta() as (sobre, completar):
-        completar(_sesion(lambda sesion: sesion.estado()))
+        completar(_sesion(lambda sesion: sesion.estado(), timeout))
     return sobre
 
 
 @mcp.tool()
-def connect() -> Sobre:
+def connect(timeout: Timeout = None) -> Sobre:
     """Conectate con una instancia de Solid Edge que ya esté abierta."""
     with _respuesta() as (sobre, completar):
-        completar(_sesion(lambda sesion: sesion.conectar()))
+        completar(_sesion(lambda sesion: sesion.conectar(), timeout))
     return sobre
 
 
 @mcp.tool()
-def docs_list() -> Sobre:
+def docs_list(timeout: Timeout = None) -> Sobre:
     """Listá los documentos abiertos con sus índices, tipos y rutas."""
     with _respuesta() as (sobre, completar):
-        lista = _llamar(documentos.listar)
+        lista = _llamar(documentos.listar, timeout)
         completar({"cantidad": len(lista), "documentos": lista})
     return sobre
 
 
 @mcp.tool()
-def docs_open(path: str) -> Sobre:
+def docs_open(path: str, timeout: Timeout = None) -> Sobre:
     """Abrí un documento CAD desde una ruta local absoluta o activalo si ya está abierto."""
     with _respuesta() as (sobre, completar):
         ruta = documentos.validar_ruta_existente(path)
-        completar(_llamar(lambda app: documentos.abrir(app, ruta), sin_alertas=True))
+        completar(_llamar(lambda app: documentos.abrir(app, ruta), timeout, sin_alertas=True))
     return sobre
 
 
 @mcp.tool()
-def docs_save(doc: Doc = None) -> Sobre:
+def docs_save(doc: Doc = None, timeout: Timeout = None) -> Sobre:
     """Guardá los cambios del documento en su ruta actual."""
     with _respuesta() as (sobre, completar):
-        completar(_llamar(lambda app: documentos.guardar(app, doc), sin_alertas=True))
+        completar(_llamar(lambda app: documentos.guardar(app, doc), timeout, sin_alertas=True))
     return sobre
 
 
 @mcp.tool()
-def vars_get(name: str, units: Units = None, doc: Doc = None) -> Sobre:
+def vars_get(name: str, units: Units = None, doc: Doc = None, timeout: Timeout = None) -> Sobre:
     """Leé una variable o cota por nombre."""
     with _respuesta() as (sobre, completar):
         elegidas = unidades.parsear_unidades(units)
         completar(
-            _llamar(lambda app: variables.obtener(acceso.documento(app, doc), name, elegidas))
+            _llamar(
+                lambda app: variables.obtener(acceso.documento(app, doc), name, elegidas), timeout
+            )
         )
     return sobre
 
@@ -170,6 +205,7 @@ def vars_set(
     formula: str | None = None,
     units: Units = None,
     doc: Doc = None,
+    timeout: Timeout = None,
 ) -> Sobre:
     """Cambiá una variable. Indicá un valor como 120mm o una fórmula como Ancho*2."""
     with _respuesta() as (sobre, completar):
@@ -180,6 +216,7 @@ def vars_set(
                 lambda app: variables.modificar(
                     acceso.documento(app, doc), name, orden, force=False, elegidas=elegidas
                 ),
+                timeout,
                 sin_alertas=True,
             )
         )
@@ -187,7 +224,9 @@ def vars_set(
 
 
 @mcp.tool()
-def mass(density: float | None = None, units: Units = None, doc: Doc = None) -> Sobre:
+def mass(
+    density: float | None = None, units: Units = None, doc: Doc = None, timeout: Timeout = None
+) -> Sobre:
     """Leé masa, volumen e inercia. Si indicás densidad en kg/m³, recalculá y modificá el modelo."""
     with _respuesta() as (sobre, completar):
         elegidas = unidades.parsear_unidades(units)
@@ -197,6 +236,7 @@ def mass(density: float | None = None, units: Units = None, doc: Doc = None) -> 
                 lambda app: fisica.propiedades(
                     acceso.documento(app, doc), valor, elegidas, app=app
                 ),
+                timeout,
                 sin_alertas=valor is not None,
             )
         )
@@ -209,6 +249,7 @@ def export(
     out: str | None = None,
     overwrite: bool = False,
     doc: Doc = None,
+    timeout: Timeout = None,
 ) -> Sobre:
     """Exportá un modelo a STEP/STL o un plano a PDF/DXF. Usá una ruta absoluta para out."""
     with _respuesta() as (sobre, completar):
@@ -216,6 +257,7 @@ def export(
         completar(
             _llamar(
                 lambda app: exportar.exportar_individual(app, doc, formato, out, overwrite),
+                timeout,
                 sin_alertas=True,
             )
         )
@@ -223,21 +265,22 @@ def export(
 
 
 @mcp.tool()
-def features_list(doc: Doc = None) -> Sobre:
+def features_list(doc: Doc = None, timeout: Timeout = None) -> Sobre:
     """Listá las operaciones de modelado de una pieza o chapa."""
     with _respuesta() as (sobre, completar):
-        completar(_llamar(lambda app: operaciones.listar(acceso.documento(app, doc))))
+        completar(_llamar(lambda app: operaciones.listar(acceso.documento(app, doc)), timeout))
     return sobre
 
 
 @mcp.tool()
-def sketch_profile(profile: dict[str, Any], doc: Doc = None) -> Sobre:
+def sketch_profile(profile: dict[str, Any], doc: Doc = None, timeout: Timeout = None) -> Sobre:
     """Creá un perfil cerrado. Enviá el objeto v1 de se sketch profile con plano y entidades."""
     with _respuesta() as (sobre, completar):
         perfil = croquis.validar_perfil(profile)
         completar(
             _llamar(
                 lambda app: modelado.crear_perfil(acceso.documento(app, doc), perfil),
+                timeout,
                 sin_alertas=True,
             )
         )
@@ -251,6 +294,7 @@ def extrude(
     direction: Literal["normal", "reverse", "symmetric"] = "normal",
     cut: bool = False,
     doc: Doc = None,
+    timeout: Timeout = None,
 ) -> Sobre:
     """Extruí un perfil por una distancia como 10mm. Sin perfil, usá el último.
 
@@ -263,6 +307,7 @@ def extrude(
                 lambda app: modelado.extruir(
                     acceso.documento(app, doc), distance, profile, direction, cut
                 ),
+                timeout,
                 sin_alertas=True,
             )
         )
@@ -274,6 +319,7 @@ def sheetmetal_tab(
     profile: str | None = None,
     direction: Literal["normal", "reverse"] = "normal",
     doc: Doc = None,
+    timeout: Timeout = None,
 ) -> Sobre:
     """Creá la base de una chapa (Tab) desde un perfil cerrado; el espesor es el del material."""
     with _respuesta() as (sobre, completar):
@@ -281,6 +327,7 @@ def sheetmetal_tab(
         completar(
             _llamar(
                 lambda app: modelado.crear_tab(acceso.documento(app, doc), profile, direction),
+                timeout,
                 sin_alertas=True,
             )
         )
@@ -294,6 +341,7 @@ def asm_add(
     rot: str | None = None,
     units: Units = None,
     doc: Doc = None,
+    timeout: Timeout = None,
 ) -> Sobre:
     """Insertá una .par, .psm o .asm. Indicá posición X,Y,Z y rotación RX,RY,RZ si hace falta."""
     with _respuesta() as (sobre, completar):
@@ -302,6 +350,7 @@ def asm_add(
         completar(
             _llamar(
                 lambda app: ensamble.agregar(acceso.documento(app, doc), path, at, rot, elegidas),
+                timeout,
                 sin_alertas=True,
             )
         )
@@ -310,17 +359,23 @@ def asm_add(
 
 @mcp.tool()
 def asm_tree(
-    depth: int = ensamble.PROFUNDIDAD_POR_DEFECTO, flat: bool = False, doc: Doc = None
+    depth: int = ensamble.PROFUNDIDAD_POR_DEFECTO,
+    flat: bool = False,
+    doc: Doc = None,
+    timeout: Timeout = None,
 ) -> Sobre:
     """Listá las ocurrencias de un ensamble. Con flat, devolvé la lista de materiales."""
     with _respuesta() as (sobre, completar):
         ensamble.validar_profundidad(depth)
-        completar(_llamar(lambda app: ensamble.arbol(acceso.documento(app, doc), depth, flat)))
+        completar(
+            _llamar(lambda app: ensamble.arbol(acceso.documento(app, doc), depth, flat), timeout)
+        )
     return sobre
 
 
 def main() -> None:
     """Arrancá el servidor MCP por stdio."""
+    _plazo_del_servidor()
     mcp.run(transport="stdio")
 
 

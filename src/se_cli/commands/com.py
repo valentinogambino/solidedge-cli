@@ -129,5 +129,6 @@ def registrar(raiz: typer.Typer) -> None:
                 lambda app: script.ejecutar(app, archivo, lista), reintentar_todo=False
             ),
             modifica=True,
+            con_plazo=False,
             plan=lambda: script.planificar(archivo, lista, allow_scripts),
         )

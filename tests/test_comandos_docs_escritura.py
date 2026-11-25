@@ -383,3 +383,22 @@ def test_modo_humano_de_error_va_a_stderr(cli, app_falsa):
     assert r.exit_code == 6
     assert "cambios sin guardar" in r.stderr
     assert r.stdout.strip() == ""
+
+
+def test_save_as_con_overwrite_y_timeout_conserva_el_apartado(
+    cli, app_falsa, sta, monkeypatch, tmp_path
+):
+    doc = app_falsa.agregar_documento("A.par", ruta="C:\p\A.par")
+    doc.bloqueo.bloquear("SaveAs")
+    monkeypatch.setattr(sta, "_cancelar", lambda _: doc.bloqueo.cancelar())
+    destino = tmp_path / "Existe.par"
+    destino.write_bytes(b"original")
+
+    r, sobre = cli("--timeout", "0.3", "docs", "save-as", str(destino), "--overwrite")
+
+    assert r.exit_code == 7 and sobre["error"]["code"] == "ocupado"
+    apartado = sobre["error"]["details"]["apartado"]
+    with open(apartado, "rb") as archivo:
+        assert archivo.read() == b"original"
+    assert not destino.exists()
+    assert app_falsa._alertas is True

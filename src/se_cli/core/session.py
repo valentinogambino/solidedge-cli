@@ -12,11 +12,14 @@ from collections.abc import Callable, Iterator
 from typing import Any, TypeVar
 
 from se_cli.core import documentos
+from se_cli.core import plazo as reloj
 from se_cli.core.errors import (
+    HRESULTS_CANCELADO,
     MK_E_UNAVAILABLE,
     NoConectado,
     Ocupado,
     SeError,
+    TiempoAgotado,
     hresult_de,
     traducir,
 )
@@ -26,6 +29,7 @@ from se_cli.core.sta import HiloSta, sta_por_defecto
 T = TypeVar("T")
 
 PROGID = "SolidEdge.Application"
+_huerfanos: list[Any] = []
 
 
 def enganchar_instancia() -> Any:
@@ -59,6 +63,7 @@ class Sesion:
         self,
         *,
         sta: HiloSta | None = None,
+        plazo: float | None = None,
         proveedor: Callable[[], Any] = enganchar_instancia,
         lanzador: Callable[[], Any] = lanzar_instancia,
         intentos: int = INTENTOS_POR_DEFECTO,
@@ -66,6 +71,8 @@ class Sesion:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._sta = sta or sta_por_defecto()
+        self.plazo = plazo
+        self._generacion_app = self._sta.generacion
         self._proveedor = proveedor
         self._lanzador = lanzador
         self._intentos = intentos
@@ -79,9 +86,13 @@ class Sesion:
         return reintentar(fn, self._intentos, self._espera, sleep=self._sleep)
 
     def _enganchar(self) -> Any:
+        reloj.antes_de_llamar()
         try:
             return self._proveedor()
         except Exception as error:
+            if reloj.cancelada():
+                hr = hresult_de(error)
+                raise reloj.error_cancelado(hr if hr in HRESULTS_CANCELADO else None) from error
             hresult = hresult_de(error)
             motivo = (
                 "No hay una instancia de Solid Edge abierta."
@@ -96,7 +107,7 @@ class Sesion:
         Sin `lanzar` y sin instancia levanta `NoConectado` (exit 3) y no lanza nada.
         Devuelve datos planos: `{"version", "nombre", "lanzada"}`.
         """
-        return self._sta.ejecutar(self._conectar, lanzar)
+        return self._sta.ejecutar_con_plazo(self.plazo, self._conectar, lanzar)
 
     def estado(self) -> dict[str, Any]:
         """Leé el estado de la instancia abierta, si existe."""
@@ -114,6 +125,7 @@ class Sesion:
         return self.llamar(documentos.estado)
 
     def _conectar(self, lanzar: bool) -> dict[str, Any]:
+        self._apartar_app_vieja()
         lanzada = False
         try:
             app = self._enganchar()
@@ -121,12 +133,16 @@ class Sesion:
             if not lanzar:
                 raise
             try:
-                app = self._lanzador()
+                with reloj.suspendido():
+                    app = self._lanzador()
+            except TiempoAgotado:
+                raise
             except Exception as error:
                 raise NoConectado(
                     "No se pudo lanzar Solid Edge.", hresult=hresult_de(error)
                 ) from error
             lanzada = True
+        reloj.comprobar_cancelacion()
         self._app = app
         app = self._app_verificada()
         if lanzada:
@@ -139,8 +155,23 @@ class Sesion:
             "lanzada": lanzada,
         }
 
+    def _apartar_app_vieja(self) -> bool:
+        reloj.comprobar_cancelacion()
+        anterior = self._generacion_app != self._sta.generacion
+        tenia_app = self._app is not None
+        if anterior:
+            if tenia_app:
+                _huerfanos.append(self._app)
+                self._app = None
+            self._generacion_app = self._sta.generacion
+        return anterior and tenia_app
+
     def _app_verificada(self) -> Any:
         """Devolvé la app tras leer `.Version`; si falla, reconectá una vez."""
+        if self._apartar_app_vieja():
+            app = self._enganchar()
+            reloj.comprobar_cancelacion()
+            self._app = app
         if self._app is None:
             raise NoConectado("No hay sesión con Solid Edge; conectate primero.")
         try:
@@ -150,8 +181,12 @@ class Sesion:
                 raise
             self._app = None
             try:
-                self._app = self._enganchar()
+                app = self._enganchar()
+                reloj.comprobar_cancelacion()
+                self._app = app
                 self._reintentar(lambda: self._app.Version)
+            except TiempoAgotado:
+                raise
             except Exception as segundo:
                 self._app = None
                 if isinstance(segundo, NoConectado):
@@ -183,7 +218,7 @@ class Sesion:
             return fn(app)
 
         try:
-            return self._sta.ejecutar(correr)
+            return self._sta.ejecutar_con_plazo(self.plazo, correr)
         except SeError:
             raise
         except Exception as error:
@@ -194,17 +229,28 @@ class Sesion:
         """Poné `DisplayAlerts=False` y restaurá el valor previo al salir, aun con excepción."""
         previo = self.llamar(lambda app: app.DisplayAlerts)
         self.llamar(lambda app: setattr(app, "DisplayAlerts", False))
+        restaurar = True
         try:
             yield
+        except TiempoAgotado as error:
+            # Con el hilo abandonado no hay a quién preguntarle; si solo se canceló la llamada,
+            # se intenta restaurar sin que un nuevo fallo tape el timeout.
+            restaurar = False
+            if error.details.get("cancelacion") == "cancelada":
+                with contextlib.suppress(Exception):
+                    self.llamar(lambda app: setattr(app, "DisplayAlerts", previo))
+            raise
         finally:
-            self.llamar(lambda app: setattr(app, "DisplayAlerts", previo))
+            if restaurar:
+                self.llamar(lambda app: setattr(app, "DisplayAlerts", previo))
 
     def cerrar(self) -> None:
         """Soltá la referencia a la app en el hilo STA. No cierra Solid Edge."""
         if self._app is not None:
-            self._sta.ejecutar(self._soltar)
+            self._sta.ejecutar_con_plazo(self.plazo, self._soltar)
 
     def _soltar(self) -> None:
+        self._apartar_app_vieja()
         self._app = None
 
 

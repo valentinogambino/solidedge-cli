@@ -282,3 +282,23 @@ def test_png_de_draft_conserva_la_proporcion_de_la_hoja(
     assert r.exit_code == 0, r.output
     salida = tmp_path / "D.png"
     assert ("View.SaveAsImage", "D.dft", str(salida), *tamano) in app_falsa.registro
+
+
+def test_overwrite_con_timeout_conserva_el_apartado(cli, app_falsa, sta, monkeypatch, tmp_path):
+    doc = _doc(app_falsa, tmp_path)
+    doc.bloqueo.bloquear("SaveCopyAs")
+    monkeypatch.setattr(sta, "_cancelar", lambda _: doc.bloqueo.cancelar())
+    existente = tmp_path / "Pieza.stp"
+    existente.write_bytes(b"viejo")
+
+    r, sobre = cli("--timeout", "0.3", "export", "--format", "step", "--overwrite")
+
+    assert r.exit_code == 7 and sobre["error"]["code"] == "ocupado"
+    apartado = sobre["error"]["details"]["apartado"]
+    # Solid Edge podría seguir escribiendo el destino: no se restaura ni se borra el apartado.
+    assert [p.name for p in tmp_path.iterdir() if ".bak" in p.name] == [
+        apartado.rsplit("\\", 1)[-1]
+    ]
+    with open(apartado, "rb") as archivo:
+        assert archivo.read() == b"viejo"
+    assert not existente.exists()

@@ -18,7 +18,7 @@ def app_falsa():
 @pytest.fixture
 def sta():
     """Hilo STA con init/uninit falsos (no toca pywin32)."""
-    hilo = HiloSta(lambda: None, lambda: None)
+    hilo = HiloSta(lambda: None, lambda: None, habilitar=lambda: None, cancelar=lambda _: None)
     yield hilo
     hilo.cerrar()
 

@@ -6,7 +6,14 @@ import time
 from collections.abc import Callable
 from typing import TypeVar
 
-from se_cli.core.errors import HRESULTS_OCUPADO, Ocupado, hresult_de
+from se_cli.core import plazo
+from se_cli.core.errors import (
+    HRESULTS_CANCELADO,
+    HRESULTS_OCUPADO,
+    Ocupado,
+    TiempoAgotado,
+    hresult_de,
+)
 
 T = TypeVar("T")
 
@@ -31,17 +38,21 @@ def reintentar(
     if intentos < 1:
         raise ValueError("Tiene que haber al menos un intento.")
     for intento in range(1, intentos + 1):
+        plazo.antes_de_llamar()
         try:
             return fn()
         except Exception as error:
             hresult = hresult_de(error)
+            if plazo.cancelada() and not isinstance(error, TiempoAgotado):
+                cancelado = hresult if hresult in HRESULTS_CANCELADO else None
+                raise plazo.error_cancelado(cancelado) from error
             if hresult not in HRESULTS_OCUPADO:
                 raise
             if intento == intentos:
                 raise Ocupado(
                     f"Solid Edge sigue ocupado tras {intentos} intentos.",
                     hresult=hresult,
-                    details={"intentos": intentos},
+                    details={"intentos": intentos, "motivo": "rechazado"},
                 ) from error
             sleep(espera)
     raise AssertionError("inalcanzable")  # pragma: no cover

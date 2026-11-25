@@ -7,6 +7,8 @@ instancia abierta (nunca lanza Solid Edge salvo `se connect --launch`) y se suel
 from __future__ import annotations
 
 import contextlib
+import os
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -14,7 +16,7 @@ from typing import Any
 import typer
 
 from se_cli import salida
-from se_cli.core.errors import SoloLectura, traducir
+from se_cli.core.errors import SoloLectura, TiempoAgotado, traducir
 from se_cli.core.session import Sesion
 
 
@@ -25,6 +27,7 @@ class Opciones:
     json: bool = False
     readonly: bool = False
     dry_run: bool = False
+    timeout: float | None = None
 
 
 def crear_sesion() -> Sesion:
@@ -44,6 +47,7 @@ def ejecutar(
     modifica: bool = False,
     plan: Callable[[], dict[str, Any]] | None = None,
     conectar: bool = True,
+    con_plazo: bool = True,
 ) -> None:
     """Corré un comando de punta a punta e imprimí su resultado.
 
@@ -62,11 +66,18 @@ def ejecutar(
     opciones = opciones_de(ctx)
     salida.forzar_utf8()
     try:
-        data = _correr(opciones, fn, modifica, plan, conectar)
+        data = _correr(opciones, fn, modifica, plan, conectar, con_plazo)
         salida.emitir_ok(data, como_json=opciones.json)
     except Exception as error:  # noqa: BLE001 - todo error se traduce a SeError
         traducido = traducir(error)
         salida.emitir_error(traducido, como_json=opciones.json)
+        if (
+            isinstance(traducido, TiempoAgotado)
+            and traducido.details["cancelacion"] == "abandonada"
+        ):
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(7)
         raise typer.Exit(traducido.exit_code) from None
 
 
@@ -76,6 +87,7 @@ def _correr(
     modifica: bool,
     plan: Callable[[], dict[str, Any]] | None,
     conectar: bool,
+    con_plazo: bool,
 ) -> Any:
     if modifica and opciones.readonly:
         raise SoloLectura("Bloqueado por --readonly: este comando modifica Solid Edge.")
@@ -84,6 +96,7 @@ def _correr(
         return {"dry_run": True, **descripcion}
 
     sesion = crear_sesion()
+    sesion.plazo = opciones.timeout if con_plazo else None
     try:
         if conectar:
             sesion.conectar()

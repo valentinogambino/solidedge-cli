@@ -145,3 +145,62 @@ def test_modo_humano_imprime_tabla(espia):
 def test_version():
     r = runner.invoke(app_real, ["--version"])
     assert r.exit_code == 0 and __version__ in r.stdout
+
+
+@pytest.mark.parametrize("valor", ["0", "-1", "abc", "nan", "inf", "3601"])
+def test_timeout_cli_invalido(cli, valor):
+    r, sobre = cli("--timeout", valor, "status")
+    assert r.exit_code == 2
+    assert sobre["error"]["code"] == "argumento_invalido"
+
+
+def test_timeout_cli_entorno_y_flag(cli, sesion, monkeypatch):
+    monkeypatch.setenv("SE_TIMEOUT", "abc")
+    r, sobre = cli("status")
+    assert r.exit_code == 2
+    assert sobre["error"]["code"] == "argumento_invalido"
+
+    r, _ = cli("--timeout", "4", "status")
+    assert r.exit_code == 0
+    assert sesion.plazo == 4
+
+    monkeypatch.setenv("SE_TIMEOUT", "3")
+    r, _ = cli("status")
+    assert r.exit_code == 0
+    assert sesion.plazo == 3
+
+    monkeypatch.setenv("SE_TIMEOUT", "")
+    r, _ = cli("status")
+    assert r.exit_code == 0
+    assert sesion.plazo is None
+
+
+def test_run_ignora_timeout(cli, sesion, tmp_path):
+    archivo = tmp_path / "leer.py"
+    archivo.write_text("def main(app, args):\n    return app.Version\n", encoding="utf8")
+    r, _ = cli("--timeout", "0.001", "run", str(archivo), "--allow-scripts")
+    assert r.exit_code == 0
+    assert sesion.plazo is None
+
+
+@pytest.mark.parametrize("abandona", [False, True])
+def test_timeout_cli_bloqueado(cli, app_falsa, sta, monkeypatch, abandona):
+    from se_cli import ejecucion
+    from se_cli.core import sta as modulo_sta
+
+    salidas = []
+    monkeypatch.setattr(modulo_sta, "CANCELAR_POR_COM", not abandona)
+    monkeypatch.setattr(ejecucion.os, "_exit", salidas.append)
+    monkeypatch.setattr(sta, "_cancelar", lambda _: app_falsa.bloqueo.cancelar())
+    app_falsa.bloqueo.bloquear("Version")
+    try:
+        r, sobre = cli("--timeout", "0.3", "status")
+        assert r.exit_code == 7
+        assert sobre["error"]["code"] == "ocupado"
+        assert sobre["error"]["details"]["motivo"] == "timeout"
+        assert sobre["error"]["details"]["cancelacion"] == (
+            "abandonada" if abandona else "cancelada"
+        )
+        assert salidas == ([7] if abandona else [])
+    finally:
+        app_falsa.bloqueo.soltar()

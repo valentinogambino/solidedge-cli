@@ -101,3 +101,32 @@ def test_traducir_deja_pasar_se_error_y_clasifica_el_resto():
     interno = traducir(ValueError("roto"))
     assert (interno.codigo, interno.exit_code) == ("interno", 1)
     assert "ValueError" in interno.mensaje
+
+
+@pytest.mark.parametrize("hresult", [0x80010002, 0x8001011F])
+def test_hresult_cancelado_es_ocupado(hresult):
+    from se_cli.core.errors import traducir_com_error
+
+    error = traducir_com_error(com_error(hresult))
+    assert error.exit_code == 7
+    assert error.details == {"motivo": "cancelada"}
+
+
+def test_tiempo_agotado_mensaje_y_detalles():
+    from se_cli.core.errors import TiempoAgotado
+
+    error = TiempoAgotado(5, 5.26, "cancelada", hresult=0x8001011F)
+    assert error.exit_code == 7
+    assert error.mensaje == (
+        "Solid Edge no respondió en 5 s y se dejó de esperar. Puede haber un diálogo modal "
+        "abierto en Solid Edge esperando respuesta: revisalo y cerralo. Solid Edge no se cerró; "
+        "la operación pudo completarse igual o quedar a medias. Si era una operación larga, "
+        "aumentá el timeout."
+    )
+    assert error.a_dict()["hresult"] == "0x8001011F"
+    assert error.details == {
+        "motivo": "timeout",
+        "timeout_s": 5,
+        "esperado_s": 5.3,
+        "cancelacion": "cancelada",
+    }

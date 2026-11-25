@@ -27,6 +27,10 @@ RPC_E_CALL_REJECTED = 0x80010001
 RPC_E_SERVERCALL_RETRYLATER = 0x8001010A
 RPC_S_SERVER_UNAVAILABLE = 0x800706BA
 RPC_E_DISCONNECTED = 0x80010108
+# Lo que devuelve la llamada cancelada con CoCancelCall (verificado en vivo: 0x80010002, "Call was
+# canceled by the message filter"); 0x8001011F también se trata como cancelación.
+RPC_E_CALL_CANCELED = 0x80010002
+HRESULTS_CANCELADO = frozenset({RPC_E_CALL_CANCELED, 0x8001011F})
 MK_E_UNAVAILABLE = 0x800401E3
 
 # Códigos estándar de un servidor COM que rechaza llamadas. Contra Solid Edge 2026 no se pudieron
@@ -133,6 +137,30 @@ class Ocupado(SeError):
     codigo = "ocupado"
 
 
+class TiempoAgotado(Ocupado):
+    def __init__(
+        self,
+        plazo: float,
+        esperado: float,
+        cancelacion: str = "cancelada",
+        *,
+        hresult: int | None = None,
+    ) -> None:
+        super().__init__(
+            f"Solid Edge no respondió en {plazo:g} s y se dejó de esperar. Puede haber un "
+            "diálogo modal abierto en Solid Edge esperando respuesta: revisalo y cerralo. "
+            "Solid Edge no se cerró; la operación pudo completarse igual o quedar a medias. "
+            "Si era una operación larga, aumentá el timeout.",
+            hresult=hresult,
+            details={
+                "motivo": "timeout",
+                "timeout_s": plazo,
+                "esperado_s": round(esperado, 1),
+                "cancelacion": cancelacion,
+            },
+        )
+
+
 class ErrorLote(SeError):
     """Un lote terminó, pero algún archivo falló; `details` trae todos los resultados."""
 
@@ -166,6 +194,8 @@ def traducir_com_error(error: BaseException) -> SeError:
     mensaje = descripcion or texto or "Error COM."
     if texto and texto != mensaje:
         detalles["strerror"] = texto
+    if hresult in HRESULTS_CANCELADO:
+        return Ocupado(mensaje, hresult=hresult, details={"motivo": "cancelada"})
     clase = ErrorCom
     if hresult in HRESULTS_OCUPADO:
         clase = Ocupado

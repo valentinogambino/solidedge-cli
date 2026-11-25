@@ -46,6 +46,7 @@ Van antes del comando: `se --json docs list`.
 | `--json` | Salida `{ok, data, error}` en una línea por stdout, sin colores. Sin `--json` sale una tabla y los errores van a stderr. Con `--json` también los errores de uso de Typer (subcomando inexistente, argumento faltante, opción o valor inválido) salen como sobre `argumento_invalido`, exit 2. |
 | `--readonly` | Bloquea todo comando que modifica (`open`, `new`, `save`, `save-as`, `close`, `quit`, `connect --launch`): exit 6, `solo_lectura`, sin tocar Solid Edge. |
 | `--dry-run` | Los comandos que modifican informan qué harían (`"dry_run": true`) sin llamar a COM de escritura. Los argumentos se validan igual. |
+| `--timeout SEG` | Segundos máximos esperando que Solid Edge responda una llamada COM; al vencer, exit 7 `ocupado` sin cerrar Solid Edge. También `SE_TIMEOUT`. Sin esto, espera sin límite. Ver "Timeout". |
 | `--version` | Versión de `se`. |
 
 Cada invocación es un proceso nuevo: se engancha a la instancia abierta y la suelta al terminar.
@@ -1063,7 +1064,8 @@ están en la sección de cada comando.
 | `features list` marca el documento como modificado | **imposible de evitar**: pasa con algunos archivos y una sola vez; no hay lectura que no lo marque ni forma de limpiarlo. Se informa en `modificado_por_lectura` |
 | `--overwrite` sobre un archivo en uso | **resuelto**: exit 6 con el original intacto (antes, exit 1 con el `PermissionError` crudo) |
 | `docs new --template` y `draft from-part --template` | **resuelto**: daban siempre exit 4; ahora usan `Documents.Add(ProgID, plantilla)` |
-| hresult de "ocupado" (exit 7) | **no reproducible**: Solid Edge no rechaza llamadas (atiende o encola); sin timeout, un modal deja al comando esperando |
+| hresult de "ocupado" (exit 7) | **no reproducible**: Solid Edge no rechaza llamadas (atiende o encola) |
+| un modal deja al comando esperando | **resuelto con `--timeout`** (opcional; sin él, la CLI espera sin límite): exit 7 al vencer el plazo, sin cerrar Solid Edge. Límites: una llamada única más larga que el plazo se corta; `se run` no tiene plazo (ver "Timeout") |
 | `features suppress` en operaciones sincrónicas | **imposible** por la API (exit 6, ver `features suppress`) |
 | `sheetmetal flat-dxf` sin desarrollo | exit 5 salvo `--create`; un `--create` fallido deja un `FlatPatternModel` vacío que la API no borra |
 | bridas y agujeros en chapa doblada | `sheetmetal tab` solo crea la base y no acepta una cara existente. Sin comando de brida: probado con `se run --allow-scripts` y `Flanges.AddSync` sobre una base creada en modo sincrónico. Después, en modo ordenado, `hole --plane front --direction reverse --through` perforó el tramo vertical. El DXF incluyó ambos agujeros y una línea de pliegue en `DOWN_CENTERLINES` |
@@ -1089,7 +1091,7 @@ Son estables entre versiones; los fija un test (`tests/test_errores.py`).
 | 4 | error COM | `com_error` |
 | 5 | recurso no encontrado (documento, variable...) | `doc_no_encontrado` |
 | 6 | operación bloqueada (`--readonly`, `se run` sin flag) o no soportada | `solo_lectura`, `no_soportado` |
-| 7 | Solid Edge ocupado tras agotar los reintentos | `ocupado` |
+| 7 | Solid Edge ocupado tras agotar los reintentos, o sin respuesta dentro de `--timeout` | `ocupado` |
 
 ### Solid Edge ocupado (exit 7)
 
@@ -1106,12 +1108,51 @@ sin reintentos):
 | diálogo modal abierto desde la interfaz: `StartCommand(25065)` ("About Solid Edge"; `StartCommand` vuelve enseguida) | respuesta normal en menos de 1 s |
 | llamadas largas: perfil con 900 círculos (`End` 2,5 s), `AddFiniteExtrudedProtrusion` (3,5 s) y `Recompute` (3,1 s) | 2158 llamadas en 120 s, ninguna con error; las que llegaron durante una llamada larga esperaron en cola (latencia máxima 3,38 s) |
 
-Así que con Solid Edge trabado, `se` espera en vez de fallar: no hay timeout. Un diálogo modal
-que Solid Edge abra en medio de un comando deja a ese comando esperando hasta que alguien lo
-cierre; por eso los comandos validan antes lo que abriría uno (destino existente, weldment sin
-plantilla). El mapeo y los reintentos quedan como están porque no molestan y cubren a otros
-servidores o versiones. Al pedir un fondo inexistente (`Sheets.Item("A5-Sheet")`) Solid Edge
-responde `RPC_E_SERVERFAULT` (0x80010105): eso es un error COM común (exit 4), no "ocupado".
+Así que con Solid Edge trabado, `se` espera en vez de fallar, salvo que se pida un plazo con
+`--timeout` (ver "Timeout"). Un diálogo modal que Solid Edge abra en medio de un comando deja a
+ese comando esperando hasta que alguien lo cierre; por eso los comandos validan antes lo que
+abriría uno (destino existente, weldment sin plantilla). El mapeo y los reintentos quedan como
+están porque no molestan y cubren a otros servidores o versiones. Al pedir un fondo inexistente
+(`Sheets.Item("A5-Sheet")`) Solid Edge responde `RPC_E_SERVERFAULT` (0x80010105): eso es un error
+COM común (exit 4), no "ocupado".
+
+### Timeout (`--timeout`)
+
+`se --timeout 60 export ...` o `SE_TIMEOUT=60` (el flag gana a la variable; una variable vacía
+cuenta como no definida). Tiene que ser un número de segundos mayor que 0 y hasta 3600; otro valor
+da exit 2. Sin flag ni variable, la CLI espera sin límite; el servidor MCP usa 120 s (ver
+"Extensión para Claude Desktop").
+
+- **Qué mide:** inactividad, no la duración total. El reloj se reinicia al empezar cada llamada
+  COM, así que un comando largo hecho de muchas llamadas cortas (un lote de `export`) no vence. Una
+  sola llamada que tarde más que el plazo sí se corta (en esta máquina `docs new part` tarda más de
+  5 s): en ese caso subí el `--timeout`.
+- **Qué pasa al vencer:** se pide la cancelación de la llamada en curso (`CoCancelCall`). Si
+  vuelve dentro de 5 s, el comando termina con exit 7 y `details.cancelacion: "cancelada"`; el hilo
+  COM y la conexión siguen sirviendo (en MCP, la llamada siguiente del mismo servidor responde). Si
+  no vuelve, se abandona ese hilo y se arranca otro (`"abandonada"`; la CLI sale con `os._exit(7)`
+  para no esperar al hilo colgado). Nunca se reintenta solo después de un timeout, y Solid Edge no se
+  cierra: la operación pudo completarse igual o quedar a medias.
+- **Error:** exit 7, `error.code: "ocupado"`, `details`: `motivo: "timeout"`, `timeout_s`,
+  `esperado_s` (segundos desde la última llamada), `cancelacion` y, si la llamada volvió cancelada,
+  `hresult` `0x80010002`. El mensaje avisa que puede haber un diálogo modal abierto en Solid Edge.
+- **Lotes:** un timeout en un archivo corta el lote; lo que quedó sin hacer sale con "No se intentó:
+  Solid Edge no respondió a tiempo." dentro de `details.resultados`.
+- **`--overwrite`:** si vence el plazo, el archivo previo no se restaura ni se borra, porque Solid
+  Edge podría seguir escribiendo el destino: queda apartado y su ruta sale en `details.apartado`.
+- **`DisplayAlerts`:** si la llamada quedó `cancelada`, se intenta restaurarlo; con el hilo
+  `abandonada` no, y puede quedar apagado hasta la próxima escritura de `se`.
+- **Fuera del plazo:** `se run` corre siempre sin plazo; `se connect --launch` mide el plazo salvo
+  durante el lanzamiento de Solid Edge.
+
+Verificado en vivo (2026-11-25, Solid Edge 226.00.01.04) con un diálogo modal real ("This file
+exists" por `SaveCopyAs` con `DisplayAlerts = True`, plazo de 5 s): la llamada se cancela y vuelve
+`0x80010002` ("Call was canceled by the message filter") a los 5,0 s; con el modal todavía abierto,
+la llamada siguiente de la misma sesión responde en menos de 10 ms; el proceso de `se` termina con
+exit 7 a los 6,8 s (cancelada) y a los 7,3 s (abandonada, sin gracia), sin quedar colgado, y el
+archivo de destino queda intacto. Habilitar la cancelación no tiene costo medible (500 lecturas de
+`Application.Version`: cociente 0,9 a 1,3 según la corrida). `se com invoke` apaga `DisplayAlerts`,
+así que no abre ese diálogo.
 
 ## Forma de `--json`
 
@@ -1196,6 +1237,15 @@ se rechazan antes de tocar Solid Edge).
 | `extrude` | `se extrude` |
 | `sheetmetal_tab` | `se sheetmetal tab` (base de una chapa; `direction` `normal` o `reverse`) |
 | `asm_add`, `asm_tree` | `se asm add`, `se asm tree` |
+
+Todas aceptan `timeout` (segundos, mayor que 0 y hasta 3600; el esquema lo publica como
+`exclusiveMinimum: 0` y `maximum: 3600`). Sin él rige `SE_TIMEOUT` del entorno del servidor y, si
+no está, 120 s; un `SE_TIMEOUT` inválido avisa una vez por stderr y se usa 120. Al vencer, la
+herramienta devuelve el sobre `ocupado` (ver "Timeout") y el servidor sigue vivo: el `status`
+siguiente responde. En el manifiesto es la opción **Timeout (s)** (`timeout_s`, por defecto 120,
+de 1 a 3600), que llega al servidor como `SE_TIMEOUT`. El servidor nunca termina el proceso por un
+timeout. Probado con un servidor stdio real: `docs_open` con `timeout` de 0,05 s devolvió `ocupado`
+y el `status` siguiente respondió en el mismo servidor.
 
 No están `com set`/`com invoke`, `run` ni `quit`. En una chapa sin base, `extrude` sin `cut` da
 `no_soportado` con un `hint` hacia `se sheetmetal tab`: por MCP es la herramienta `sheetmetal_tab`.
