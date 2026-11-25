@@ -191,6 +191,46 @@ def exigir_destino_libre(absoluta: str, sobrescribir: bool) -> bool:
     return existe
 
 
+# Windows: ERROR_SHARING_VIOLATION y ERROR_LOCK_VIOLATION (otro proceso tiene el archivo abierto).
+_WINERROR_EN_USO = frozenset({32, 33})
+
+PISTA_EN_USO = (
+    "Cerrá el archivo en el programa que lo tiene abierto (si es Solid Edge: `se docs close "
+    "<nombre>`) o elegí otro destino."
+)
+
+
+def archivo_bloqueado(ruta: str, error: OSError) -> SoloLectura:
+    """`SoloLectura` (exit 6) para un archivo que Windows no deja mover o reemplazar."""
+    winerror = getattr(error, "winerror", None)
+    en_uso = winerror in _WINERROR_EN_USO
+    motivo = "el archivo está en uso por otro programa" if en_uso else "Windows negó el acceso"
+    return SoloLectura(
+        f"No se puede reemplazar {ruta}: {motivo}. El archivo original quedó como estaba.",
+        details={
+            "ruta": ruta,
+            "motivo": "archivo_en_uso" if en_uso else "acceso_denegado",
+            "winerror": winerror,
+            "original_intacto": True,
+            "hint": PISTA_EN_USO,
+        },
+    )
+
+
+def apartar(ruta: str) -> str:
+    """Mové un archivo existente a `<ruta>.se-<id>.bak` y devolvé esa ruta.
+
+    Si Windows no lo deja (lo tiene abierto Solid Edge u otro programa) da `SoloLectura`
+    (exit 6) sin haber tocado nada: verificado en vivo, `os.replace` da WinError 32.
+    """
+    apartado = f"{ruta}.se-{uuid.uuid4().hex[:8]}.bak"
+    try:
+        os.replace(ruta, apartado)
+    except PermissionError as error:
+        raise archivo_bloqueado(ruta, error) from error
+    return apartado
+
+
 # --- Lectura -------------------------------------------------------------------------------
 
 
@@ -435,6 +475,7 @@ def guardar_como(
     """
     absoluta = validar_destino(destino, sobrescribir)
     indice, doc = resolver(app, selector)
+    _exigir_no_abierto_en_otro(app, absoluta, doc)
 
     if os.path.normcase(_ruta_de(doc) or "") == os.path.normcase(absoluta):
         _exigir_escribible(doc)
@@ -449,13 +490,32 @@ def guardar_como(
     }
 
 
+def _exigir_no_abierto_en_otro(app: Any, absoluta: str, doc: Any) -> None:
+    """Exit 6 si el destino es otro documento abierto en Solid Edge (lo tiene bloqueado)."""
+    buscada = os.path.normcase(absoluta)
+    propia = _clave(doc)
+    for indice, otro in _items(app):
+        if os.path.normcase(_ruta_de(otro) or "") == buscada and _clave(otro) != propia:
+            nombre = str(_leer(lambda otro=otro: otro.Name))
+            raise SoloLectura(
+                f"No se puede guardar en {absoluta}: ese archivo está abierto en Solid Edge "
+                f"como {nombre}. El archivo original quedó como estaba.",
+                details={
+                    "ruta": absoluta,
+                    "motivo": "archivo_en_uso",
+                    "abierto_en_solid_edge": {"indice": indice, "nombre": nombre},
+                    "original_intacto": True,
+                    "hint": f"Cerralo antes (`se docs close {nombre}`) o elegí otro destino.",
+                },
+            )
+
+
 def _guardar_en(
     doc: Any, absoluta: str, sobrescribir: bool, verificar: Callable[[str], None] | None = None
 ) -> None:
     apartado: str | None = None
     if exigir_destino_libre(absoluta, sobrescribir):
-        apartado = f"{absoluta}.se-{uuid.uuid4().hex[:8]}.bak"
-        os.replace(absoluta, apartado)
+        apartado = apartar(absoluta)
     try:
         _leer(lambda: doc.SaveAs(absoluta))
         if verificar is not None:
@@ -585,6 +645,8 @@ __all__ = [
     "TIPOS_NUEVOS",
     "abrir",
     "activo",
+    "apartar",
+    "archivo_bloqueado",
     "buscar_abierto",
     "cerrar",
     "cerrar_todos",

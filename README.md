@@ -126,6 +126,18 @@ Si el destino existe y no se pasó `--overwrite`: exit 6 (Solid Edge abriría un
 `DisplayAlerts` no suprime). Con `--overwrite` el archivo anterior se aparta y se restaura si el
 guardado falla.
 
+**Archivo en uso** (verificado en vivo el 2026-11-25): si el destino es otro documento abierto en
+Solid Edge, `save-as` da exit 6 (`solo_lectura`) antes de tocar nada, con
+`details.abierto_en_solid_edge` (`indice` y `nombre`), `motivo: "archivo_en_uso"`,
+`original_intacto: true` y un `hint` con el `se docs close` que hace falta. Si lo tiene abierto
+otro programa, Windows no deja apartarlo (`os.replace` da WinError 32): también exit 6, con
+`details.winerror` (32 o 33 si está en uso; con otro, como 5, `motivo: "acceso_denegado"`). En los
+dos casos el original queda intacto y no queda ningún `.bak`. Antes daba exit 1 (`interno`) con
+el `PermissionError` crudo. Lo mismo vale para `export --overwrite` (en un lote, ese archivo queda
+en `ok: false` con código `solo_lectura`), `draft from-part --overwrite` (por ejemplo, con el
+`.dft` abierto en Solid Edge; el Draft a medio armar se descarta) y `sheetmetal flat-dxf
+--overwrite`.
+
 ```powershell
 se --json docs close [<doc>] [--save | --discard]
 # {"ok": true, "data": {"cerrado": true, "documento": "Pieza.par", "guardado": false, "descartado": false}, "error": null}
@@ -738,7 +750,8 @@ Sin entradas exporta el documento activo (o `--doc`). Tiene que estar guardado o
 `--out` con ruta de archivo. `--out` puede ser un archivo (sin extensión se le pone la del formato;
 con la de otro formato da exit 2) o una carpeta existente. Si la salida ya existe y no hay
 `--overwrite`: exit 6 (Solid Edge abriría un diálogo modal que `DisplayAlerts` no suprime); con
-`--overwrite` el archivo anterior se aparta y se restaura si la exportación falla. Después de
+`--overwrite` el archivo anterior se aparta y se restaura si la exportación falla (si está en uso
+por otro programa, exit 6 con el original intacto: ver `docs save-as`). Después de
 exportar se verifica que el archivo exista y pese más de 0 bytes; si no, exit 4.
 
 ```powershell
