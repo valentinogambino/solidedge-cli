@@ -587,6 +587,12 @@ rectángulo de 20 x 40 mm en `front` desde x = 10 mm, `revolve --axis y` = tubo 
 volumen esperado pi (30^2 - 10^2) 40 = 100530.965 mm3 y 789.168 g; obtenidos los mismos.
 Una segunda revolución de 180deg sumó 4712.389 mm3 (esperado pi (20^2 - 10^2) 10 / 2).
 
+### Recorrido en vivo (2026-11-25, Solid Edge 226.00.01.04)
+
+Perfil en L de 60 x 20 mm más 20 x 30 mm (`sketch profile`) con un agujero de radio 5 mm, extruido
+10 mm, con densidad 7850 kg/m3: volumen 17214.602 mm3 y masa 0.1351346 kg, iguales al cálculo
+((60 x 20 + 20 x 30 - pi 5^2) x 10 mm3).
+
 ## Aristas, redondeos y chaflanes
 
 Para redondear o achaflanar hay que elegir aristas por número. `se edges list` las numera y
@@ -661,6 +667,9 @@ caras planas. `round 2mm` en las 4 verticales quitó 68.673 mm3 (esperado
 base y `chamfer 1mm --angle 30deg` en las 4 rectas de la tapa (releyendo los índices) bajaron cada
 vez el volumen de `se mass`. Un redondeo de 500 mm y un chaflán de 500 mm dieron exit 4 y dejaron
 `features list` y el volumen sin cambios. Prueba: `tests/test_vivo_redondeos.py`.
+
+2026-11-25: `chamfer 4mm --angle 60deg` sobre una arista de 50 mm de la caja de 50 x 30 x 20 mm
+quitó 692.82 mm3, igual al cálculo (1/2 x 4 x 4 tan 60 x 50).
 
 ## Escape a COM y scripts
 
@@ -1042,6 +1051,28 @@ Validados el 2026-11-23 (croquis con arcos y relaciones 2D, el 2026-11-24) contr
 | `se run` | `main(app, args)` en el hilo STA | verificado con un script de solo lectura |
 | hresult de "ocupado" | `RPC_E_CALL_REJECTED` / `RPC_E_SERVERCALL_RETRYLATER` | no se pudo provocar (2026-11-25): Solid Edge 2026 no rechaza llamadas, las atiende o las encola (ver "Solid Edge ocupado") |
 
+## Limitaciones (estado al 2026-11-25)
+
+Revisadas en vivo contra Solid Edge 2026 Community Edition 226.00.01.04. El detalle y la evidencia
+están en la sección de cada comando.
+
+| tema | estado |
+|---|---|
+| `draft from-part --sheet A5` y `A0` sin fondo | **resuelto**: el fondo se genera desde el de la plantilla (ver "Fondo generado para A5 y A0") |
+| `features list` marca el documento como modificado | **imposible de evitar**: pasa con algunos archivos y una sola vez; no hay lectura que no lo marque ni forma de limpiarlo. Se informa en `modificado_por_lectura` |
+| `--overwrite` sobre un archivo en uso | **resuelto**: exit 6 con el original intacto (antes, exit 1 con el `PermissionError` crudo) |
+| `docs new --template` y `draft from-part --template` | **resuelto**: daban siempre exit 4; ahora usan `Documents.Add(ProgID, plantilla)` |
+| hresult de "ocupado" (exit 7) | **no reproducible**: Solid Edge no rechaza llamadas (atiende o encola); sin timeout, un modal deja al comando esperando |
+| `features suppress` en operaciones sincrónicas | **imposible** por la API (exit 6, ver `features suppress`) |
+| `sheetmetal flat-dxf` sin desarrollo | exit 5 salvo `--create`; un `--create` fallido deja un `FlatPatternModel` vacío que la API no borra |
+| vistas sobre el rótulo | el layout reserva 30 mm abajo y el rótulo ISO mide 50,8 mm: con escalas grandes una vista puede pisarlo |
+| marca de agua de Community Edition | en el PDF, no se puede quitar (DXF y PNG no la traen) |
+
+**Cierres solos de Solid Edge (23 y 24/11):** no hubo crash: no hay eventos de error de `Edge.exe`
+ni volcados. Los del 24/11 a las 00:11 y a las 02:41 coinciden al segundo con apagados o reinicios
+de Windows. Los de la tarde del 23/11 quedaron sin evidencia suficiente para saber la causa. En la
+pasada del 2026-11-25 Solid Edge no se cerró solo.
+
 ## Códigos de salida
 
 Son estables entre versiones; los fija un test (`tests/test_errores.py`).
@@ -1130,6 +1161,13 @@ el ejecutable de **Python 3.11 x64**. Si instalaste Python con `uv`, podés
 obtener la ruta con `uv python find --system 3.11`.
 
 [Guía oficial de instalación de extensiones locales](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop).
+
+**Probado el 2026-11-25:** el paquete se arma con el script y `mcpb validate` da OK. Con el paquete
+extraído y el Python 3.11 de sistema (`python -I -S server/main.py`), una sesión stdio real respondió
+`initialize` (protocolo 2025-06-18), `tools/list` y `status` con Solid Edge cerrado y abierto, y
+`docs_list`, `features_list`, `mass` y `export` STEP dieron lo mismo que la CLI contra Solid Edge
+226.00.01.04. La instalación en Claude Desktop no se probó (necesita su interfaz) y el paquete no
+está firmado.
 
 Abrí Solid Edge antes de usar las herramientas. Probá `status` para comprobar
 qué documento está activo. Usá rutas absolutas cuando le pidas a Claude que
