@@ -9,19 +9,26 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, NoReturn
 
 import typer.core
 from typer import _click as click  # click vendorizado por Typer (no hay `click` propio)
 
 from se_cli import salida
-from se_cli.core.errors import ArgumentoInvalido
+from se_cli.core.errors import ArgumentoInvalido, SeError, traducir
 from se_cli.core.result import fallo
 
 
 def pide_json(args: Sequence[str]) -> bool:
     """Criterio simple: hay un token exactamente igual a `--json` entre los argumentos."""
     return "--json" in args
+
+
+def _salir_con(error: SeError) -> NoReturn:
+    """Sobre de error por stdout y salida con el exit code de ese mismo error (tabla estable)."""
+    salida.forzar_utf8()
+    salida.imprimir_json(fallo(error))
+    sys.exit(error.exit_code)
 
 
 class GrupoSe(typer.core.TyperGroup):
@@ -46,9 +53,9 @@ class GrupoSe(typer.core.TyperGroup):
         except typer.core.Exit as salida_click:
             sys.exit(salida_click.exit_code)
         except click.ClickException as error:
-            error.show()
-            sys.exit(error.exit_code)
-        except typer.core.Abort:
-            click.echo("Aborted!", file=sys.stderr)
-            sys.exit(1)
+            _salir_con(SeError(error.format_message()))
+        except (typer.core.Abort, KeyboardInterrupt):
+            _salir_con(SeError("Operación cancelada."))
+        except Exception as error:  # noqa: BLE001 - con --json la salida siempre es un sobre
+            _salir_con(traducir(error))
         sys.exit(codigo if isinstance(codigo, int) else 0)
