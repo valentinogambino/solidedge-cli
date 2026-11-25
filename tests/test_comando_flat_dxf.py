@@ -5,7 +5,10 @@ from com_falso import (
     CILINDRO_GEOMETRIA,
     DXF_CON_ENTIDADES,
     DXF_VACIO,
+    AristaFalsa,
     CaraFalsa,
+    ColeccionFalsa,
+    FeatureFalsa,
     con_chapa,
     con_chapa_creable,
 )
@@ -228,7 +231,13 @@ def test_create_arma_el_desarrollo_guarda_reabre_y_exporta(cli, app_falsa, tmp_p
     assert r.exit_code == 0, r.output
     data = sobre["data"]
     assert data["desarrollo_creado"] is True and data["documento_guardado"] is True
-    assert data["cara"] == {"indice": 2, "area_si": 0.0048, "criterio": "cara plana de mayor area"}
+    assert data["cara"] == {
+        "indice": 2,
+        "area_si": 0.0048,
+        "criterio": "cara plana de mayor area",
+        "arista": 1,
+        "desarrollo_reutilizado": False,
+    }
     assert data["entidades_dxf"] == 2 and data["bytes"] > 0
     assert [c[0] for c in app_falsa.escrituras] == [
         "FlatPatternModels.Add",
@@ -386,6 +395,118 @@ def test_sin_create_una_chapa_creable_sigue_dando_exit_5(cli, app_falsa, tmp_pat
     r, sobre = cli("sheetmetal", "flat-dxf")
     assert r.exit_code == 5 and "--create" in sobre["error"]["message"]
     assert app_falsa.escrituras == []
+
+
+# --- --create en chapas con cortes o que no se pueden desarrollar ----------------------------
+
+TAB = -1470838992
+EXTRUSION = 462094706
+CORTE = 462094714
+
+
+def _con_agujero(doc, aristas=None):
+    """La cara grande con el círculo del agujero como arista 1 (como en Solid Edge)."""
+    doc.Models.Item(1).Body.caras[1] = CaraFalsa(
+        0.0048, aristas=aristas or [AristaFalsa(cerrada=True), AristaFalsa(), AristaFalsa()]
+    )
+    return doc
+
+
+def _features(doc, *features):
+    doc.Models.Item(1).Features = ColeccionFalsa(list(features))
+
+
+def test_create_con_agujero_saltea_la_arista_cerrada(cli, app_falsa, tmp_path):
+    _con_agujero(_creable(app_falsa, tmp_path))
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    assert r.exit_code == 0, r.output
+    assert sobre["data"]["cara"]["arista"] == 2
+    assert sobre["data"]["desarrollo_creado"] is True
+
+
+def test_create_sin_arista_con_vertice_es_error_sin_tocar_nada(cli, app_falsa, tmp_path):
+    _con_agujero(_creable(app_falsa, tmp_path), [AristaFalsa(cerrada=True)])
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    assert r.exit_code == 4 and "arista" in sobre["error"]["message"]
+    assert app_falsa.escrituras == []
+
+
+def test_create_no_desarrollable_da_exit_6_clasificado_y_no_guarda(cli, app_falsa, tmp_path):
+    doc = _creable(app_falsa, tmp_path)
+    doc.no_desarrollable = True
+    _features(doc, FeatureFalsa("Tab_1", TAB), FeatureFalsa("ExtrudedCutout_1", CORTE))
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    assert r.exit_code == 6, r.output
+    error = sobre["error"]
+    assert error["code"] == "no_soportado" and error["hresult"] == "0x80020009"
+    assert "Exception occurred" not in error["message"] and "desarrollar" in error["message"]
+    detalles = error["details"]
+    assert detalles["base"] == {"nombre": "Tab_1", "tipo": "Tab"}
+    assert "rechazó el desarrollo" in detalles["causa_probable"]
+    assert detalles["documento_guardado"] is False
+    assert detalles["desarrollo_vacio_en_sesion"] is True and "--discard" in detalles["hint"]
+    assert [c[0] for c in app_falsa.escrituras] == ["FlatPatternModels.Add", "FlatPatterns.Add"]
+    assert not (tmp_path / "Chapa.dxf").exists()
+
+
+def test_create_con_base_de_pieza_explica_la_causa(cli, app_falsa, tmp_path):
+    doc = _creable(app_falsa, tmp_path)
+    doc.no_desarrollable = True
+    _features(doc, FeatureFalsa("ExtrudedProtrusion_1", EXTRUSION))
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    assert r.exit_code == 6
+    detalles = sobre["error"]["details"]
+    assert detalles["base"] == {"nombre": "ExtrudedProtrusion_1", "tipo": "ExtrudedProtrusion"}
+    assert "operación de pieza" in detalles["causa_probable"]
+
+
+def test_reintento_reutiliza_el_desarrollo_vacio(cli, app_falsa, tmp_path):
+    doc = _creable(app_falsa, tmp_path)
+    doc.no_desarrollable = True
+    r, _ = cli("sheetmetal", "flat-dxf", "--create")
+    assert r.exit_code == 6 and doc.FlatPatternModels.Count == 1
+
+    # Sin --create, el desarrollo vacío no cuenta: exit 5, no un DXF vacío.
+    r, sobre = cli("sheetmetal", "flat-dxf")
+    assert r.exit_code == 5 and sobre["error"]["code"] == "doc_no_encontrado"
+    assert _llamadas(app_falsa, "SaveAsFlatDXFEx") == []
+
+    doc.no_desarrollable = False
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    assert r.exit_code == 0, r.output
+    assert sobre["data"]["cara"]["desarrollo_reutilizado"] is True
+    assert len(_llamadas(app_falsa, "FlatPatternModels.Add")) == 1
+    assert (tmp_path / "Chapa.dxf").read_bytes() == DXF_CON_ENTIDADES
+
+
+def test_create_no_desarrollable_abierto_por_ruta_se_cierra_sin_guardar(cli, app_falsa, tmp_path):
+    ruta = tmp_path / "Pieza.psm"
+    ruta.write_bytes(b"psm")
+    abrir = app_falsa._documentos.Open
+
+    def abrir_no_desarrollable(ruta_):
+        doc = con_chapa_creable(abrir(ruta_))
+        doc.no_desarrollable = True
+        return doc
+
+    app_falsa._documentos.Open = abrir_no_desarrollable
+
+    r, sobre = cli("sheetmetal", "flat-dxf", str(ruta), "--create")
+
+    assert r.exit_code == 6
+    assert sobre["error"]["details"]["desarrollo_vacio_en_sesion"] is False
+    assert "no cambió" in sobre["error"]["details"]["hint"]
+    assert _llamadas(app_falsa, "Close") == [("Close", "Pieza.psm", False)]
+    assert _llamadas(app_falsa, "Save") == [] and app_falsa.Documents.Count == 0
 
 
 def test_contar_entidades_dxf(tmp_path):

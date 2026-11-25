@@ -41,7 +41,9 @@ def desarrollo_dxf(
 
     Usa el desarrollo que ya tiene la chapa; si no tiene, da exit 5 salvo con --create, que lo crea
     por API, guarda la chapa (con cualquier cambio pendiente), la cierra, la reabre y exporta.
-    Un documento que no es chapa da exit 2. En Community Edition puede salir con marca de agua.
+    Si Solid Edge no puede desarrollar la chapa, --create da exit 6 sin guardarla, con la causa
+    probable en el error. Un documento que no es chapa da exit 2. En Community Edition puede salir
+    con marca de agua.
     """
     ejecutar(
         ctx,

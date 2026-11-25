@@ -15,10 +15,17 @@ import os
 import time
 from typing import Any
 
-from se_cli.core import acceso, documentos, exportar
+from se_cli.core import acceso, documentos, exportar, operaciones
 from se_cli.core.acceso import leer, opcional
 from se_cli.core.constants import valor as constante
-from se_cli.core.errors import ArgumentoInvalido, DocNoEncontrado, ErrorCom, SoloLectura
+from se_cli.core.errors import (
+    ArgumentoInvalido,
+    DocNoEncontrado,
+    ErrorCom,
+    NoSoportado,
+    SoloLectura,
+    traducir,
+)
 from se_cli.core.exportar import Formato
 
 TIPOS_CHAPA = ("sheetmetal", "syncsheetmetal")
@@ -29,10 +36,32 @@ CRITERIO_DE_CARA = "cara plana de mayor area"
 # --- Llamadas COM aisladas (corregir acá si alguna falla en vivo) ---------------------------
 
 
+def _patrones(desarrollo: Any) -> int | None:
+    """`FlatPatterns.Count` de un `FlatPatternModel` (None si no se puede leer)."""
+    return opcional(lambda: int(desarrollo.FlatPatterns.Count))
+
+
+def _desarrollos(doc: Any) -> list[Any]:
+    coleccion = opcional(lambda: doc.FlatPatternModels)
+    if coleccion is None:
+        return []
+    cantidad = int(opcional(lambda: coleccion.Count, 0) or 0)
+    return [leer(lambda i=i: coleccion.Item(i)) for i in range(1, cantidad + 1)]
+
+
 def _tiene_desarrollo(doc: Any) -> bool:
-    """Si la chapa ya tiene un flat pattern: `FlatPatternModels.Count > 0`."""
-    cantidad = opcional(lambda: int(doc.FlatPatternModels.Count), 0)
-    return bool(cantidad)
+    """Si la chapa tiene un flat pattern con contenido.
+
+    Un `FlatPatternModel` con `FlatPatterns.Count == 0` no cuenta: es el que deja un
+    `FlatPatterns.Add` fallido (verificado en vivo, 2026-11-25) y exportarlo da un DXF vacío. Si
+    `FlatPatterns.Count` no se puede leer, el modelo cuenta como desarrollo (criterio anterior).
+    """
+    return any(_patrones(d) != 0 for d in _desarrollos(doc))
+
+
+def _desarrollo_vacio(doc: Any) -> Any | None:
+    """El `FlatPatternModel` vacío que dejó un intento fallido, para reutilizarlo."""
+    return next((d for d in _desarrollos(doc) if _patrones(d) == 0), None)
 
 
 def _exportar_desarrollo(doc: Any, ruta: str) -> None:
@@ -72,19 +101,103 @@ def elegir_cara(doc: Any) -> tuple[int, float, Any]:
     return max(caras, key=lambda c: (c[1], -c[0]))
 
 
-def _crear_desarrollo(doc: Any) -> dict[str, Any]:
+def elegir_arista(cara: Any) -> tuple[int, Any, Any]:
+    """`(índice 1-based, arista, vértice)`: la primera arista de la cara que tiene vértice inicial.
+
+    Una arista cerrada (el círculo de un agujero) no tiene `StartVertex` (`None`), y pasarla a
+    `FlatPatterns.Add` da 0x80020009 (verificado en vivo, 2026-11-25): con un agujero en la cara,
+    la arista 1 suele ser justamente el círculo.
+    """
+    aristas = leer(lambda: cara.Edges)
+    for indice in range(1, int(leer(lambda: aristas.Count)) + 1):
+        arista = leer(lambda i=indice: aristas.Item(i))
+        vertice = opcional(lambda arista=arista: arista.StartVertex)
+        if vertice is not None:
+            return indice, arista, vertice
+    raise ErrorCom(
+        "La cara elegida para el desarrollo no tiene ninguna arista con vértice (solo aristas "
+        "cerradas): Solid Edge no puede ubicar el desarrollo.",
+    )
+
+
+# Operaciones de pieza: si la primera del modelo es una de estas, la chapa no tiene una base de
+# chapa (Tab). Verificado en vivo (2026-11-25): una base `ExtrudedProtrusion` de 1 mm o de 10 mm
+# en un .psm no se desarrolla con ninguna arista; un Tab con una protrusión encima, sí.
+BASES_DE_PIEZA = ("ExtrudedProtrusion", "RevolvedProtrusion")
+
+
+def _causa_probable(doc: Any) -> dict[str, Any]:
+    """Explicación del rechazo de `FlatPatterns.Add` según la primera operación del modelo."""
+    lista = opcional(lambda: operaciones.listar(doc)["operaciones"], []) or []
+    base = lista[0] if lista else None
+    if base is not None and base["tipo"] in BASES_DE_PIEZA:
+        return {
+            "causa_probable": (
+                f"La base de la chapa es una operación de pieza ({base['nombre']}), no un Tab: "
+                "Solid Edge no la puede desarrollar (es lo que crea `se extrude` como primera "
+                "operación en un documento de chapa)."
+            ),
+            "base": {"nombre": base["nombre"], "tipo": base["tipo"]},
+        }
+    return {
+        "causa_probable": (
+            "Solid Edge rechazó el desarrollo con la cara y la arista elegidas; la geometría "
+            "puede no ser desarrollable (una operación que no es de chapa)."
+        ),
+        "base": None if base is None else {"nombre": base["nombre"], "tipo": base["tipo"]},
+    }
+
+
+PISTA_SIN_DESARROLLAR = (
+    "La chapa no se guardó. Solid Edge deja un desarrollo vacío en la sesión que la API no deja "
+    "borrar (FlatPatternModel no tiene Delete): no se exporta, un nuevo --create lo reutiliza y "
+    "se descarta cerrando sin guardar (`se docs close <doc> --discard`)."
+)
+
+
+def _crear_desarrollo(doc: Any, nombre: str) -> dict[str, Any]:
     """`FlatPatternModels.Add(modelo)` + `FlatPatterns.Add(arista, cara, vértice)`.
 
-    La arista es la primera de la cara elegida y el vértice es su vértice inicial.
+    La arista es la primera de la cara elegida que tiene vértice inicial (`elegir_arista`). Si un
+    intento anterior dejó un `FlatPatternModel` vacío, se reutiliza en vez de agregar otro
+    (verificado en vivo: `FlatPatterns.Add` sobre ese mismo modelo funciona). Si Solid Edge rechaza
+    el desarrollo, exit 6 (`no_soportado`) con la causa probable en `details`.
     """
     indice, area, cara = elegir_cara(doc)
+    indice_arista, arista, vertice = elegir_arista(cara)
     modelo = leer(lambda: doc.Models.Item(1))
-    arista = leer(lambda: cara.Edges.Item(1))
-    vertice = leer(lambda: arista.StartVertex)
-    desarrollos = leer(lambda: doc.FlatPatternModels)
-    nuevo = leer(lambda: desarrollos.Add(modelo))
-    leer(lambda: nuevo.FlatPatterns.Add(arista, cara, vertice))
-    return {"indice": indice, "area_si": area, "criterio": CRITERIO_DE_CARA}
+    desarrollo = _desarrollo_vacio(doc)
+    reutilizado = desarrollo is not None
+    if desarrollo is None:
+        desarrollos = leer(lambda: doc.FlatPatternModels)
+        desarrollo = leer(lambda: desarrollos.Add(modelo))
+    try:
+        leer(lambda: desarrollo.FlatPatterns.Add(arista, cara, vertice))
+    except Exception as error:
+        traducido = traducir(error)
+        if not isinstance(traducido, ErrorCom):
+            raise
+        raise NoSoportado(
+            f"Solid Edge no pudo desarrollar {nombre} (FlatPatterns.Add rechazó la cara "
+            f"{indice} y la arista {indice_arista}).",
+            hresult=traducido.hresult,
+            details={
+                "documento": nombre,
+                **_causa_probable(doc),
+                "cara": {"indice": indice, "area_si": area, "criterio": CRITERIO_DE_CARA},
+                "arista": indice_arista,
+                "documento_guardado": False,
+                "desarrollo_vacio_en_sesion": True,
+                "hint": PISTA_SIN_DESARROLLAR,
+            },
+        ) from error
+    return {
+        "indice": indice,
+        "area_si": area,
+        "criterio": CRITERIO_DE_CARA,
+        "arista": indice_arista,
+        "desarrollo_reutilizado": reutilizado,
+    }
 
 
 def contar_entidades_dxf(ruta: str) -> int:
@@ -190,7 +303,7 @@ def _crear_y_reabrir(app: Any, doc: Any, nombre: str, out: str | None, sobrescri
     )
     era_activo = documentos.es_activo(app, doc)
     previo = None if era_activo else documentos.documento_activo(app)
-    cara = _crear_desarrollo(doc)
+    cara = _crear_desarrollo(doc, nombre)
     reabierto = _reabrir(app, doc, origen)
     if era_activo:
         leer(lambda: reabierto.Activate())
@@ -264,7 +377,16 @@ def exportar_dxf(
         if crear:
             extras = {"desarrollo_creado": False, "documento_guardado": False, "cara": None}
             if not _tiene_desarrollo(doc):
-                doc, cara = _crear_y_reabrir(app, doc, nombre, out, sobrescribir)
+                try:
+                    doc, cara = _crear_y_reabrir(app, doc, nombre, out, sobrescribir)
+                except NoSoportado as error:
+                    if abri_yo and error.details:  # se cierra sin guardar en el finally
+                        error.details["desarrollo_vacio_en_sesion"] = False
+                        error.details["hint"] = (
+                            "La chapa se abrió para este comando y se cierra sin guardar: el "
+                            "archivo no cambió."
+                        )
+                    raise
                 extras = {"desarrollo_creado": True, "documento_guardado": True, "cara": cara}
         if not _tiene_desarrollo(doc):
             raise _sin_desarrollo(doc, nombre)
@@ -299,6 +421,7 @@ __all__ = [
     "CRITERIO_DE_CARA",
     "FORMATO_DESARROLLO",
     "contar_entidades_dxf",
+    "elegir_arista",
     "elegir_cara",
     "exportar_dxf",
     "planificar",
