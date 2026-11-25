@@ -23,7 +23,7 @@ from typing import Any
 
 from se_cli.core import acceso, documentos
 from se_cli.core.acceso import leer
-from se_cli.core.errors import ArgumentoInvalido, ErrorCom, SoloLectura
+from se_cli.core.errors import ArgumentoInvalido, ErrorCom
 
 TIPOS_SOLIDOS = ("part", "sheetmetal", "assembly")
 TIPOS_DRAFT = ("draft",)
@@ -246,12 +246,8 @@ def escribir(
     con el destino ocupado da exit 6. `verificar(ruta)` corre sobre el archivo escrito (si
     levanta, se lo deshace igual que a un archivo vacío).
     """
-    if os.path.exists(ruta) and not sobrescribir:
-        raise SoloLectura(
-            f"Ya existe {ruta}. Usá --overwrite para reemplazarlo.", details={"ruta": ruta}
-        )
     apartado: str | None = None
-    if os.path.exists(ruta):
+    if documentos.exigir_destino_libre(ruta, sobrescribir):
         apartado = f"{ruta}.se-{uuid.uuid4().hex[:8]}.bak"
         os.replace(ruta, apartado)
     try:
