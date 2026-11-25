@@ -203,7 +203,40 @@ def test_chapa_sincronica_con_error_com_da_exit_6(cli, app_falsa, accion):
     doc.ModelingMode = 1
     r, sobre = cli("features", accion, "Tab_1")
     assert r.exit_code == 6 and sobre["error"]["code"] == "no_soportado"
-    assert sobre["error"]["details"] == {"modo": "sincronico", "operacion": "Tab_1"}
+    detalles = sobre["error"]["details"]
+    assert detalles["modo"] == "sincronico" and detalles["operacion"] == "Tab_1"
+    assert any("SuppressVariable" in p for p in detalles["probado"])
+    assert "ordenado" in detalles["hint"] and "sincrónica" in sobre["error"]["message"]
+
+
+@pytest.mark.parametrize("accion", ["suppress", "unsuppress"])
+def test_operacion_sincronica_da_exit_6_sin_intentar_escribir(cli, app_falsa, accion):
+    """`ModelingModeType` de la operación manda: sincrónica (1) no se intenta suprimir."""
+    feature = FeatureFalsa("Flange_1", 123, suprimida=accion == "unsuppress")
+    feature.ModelingModeType = 1
+    _pieza(app_falsa, [feature], tipo=4, nombre="Chapa.psm")
+    r, sobre = cli("features", accion, "Flange_1")
+    assert r.exit_code == 6 and sobre["error"]["details"]["operacion"] == "Flange_1"
+    assert app_falsa.escrituras == []
+
+
+def test_operacion_ordenada_en_documento_sincronico_se_suprime(cli, app_falsa):
+    feature = FeatureFalsa("ExtrudedCutout_1", CORTE)
+    feature.ModelingModeType = 2
+    doc = _pieza(app_falsa, [feature], tipo=4, nombre="Chapa.psm")
+    doc.ModelingMode = 1
+    r, sobre = cli("features", "suppress", "ExtrudedCutout_1")
+    assert r.exit_code == 0 and sobre["data"]["suprimida"] is True
+
+
+def test_error_com_de_una_operacion_ordenada_en_documento_sincronico_es_exit_4(cli, app_falsa):
+    feature = FeatureFalsa("ExtrudedCutout_1", CORTE)
+    feature.ModelingModeType = 2
+    feature.falla_escritura = True
+    doc = _pieza(app_falsa, [feature], tipo=4, nombre="Chapa.psm")
+    doc.ModelingMode = 1
+    r, sobre = cli("features", "suppress", "ExtrudedCutout_1")
+    assert r.exit_code == 4 and sobre["error"]["code"] == "com_error"
 
 
 def test_error_com_en_modo_ordenado_sigue_siendo_exit_4(cli, app_falsa):
