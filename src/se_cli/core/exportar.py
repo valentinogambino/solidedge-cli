@@ -16,7 +16,6 @@ from __future__ import annotations
 import contextlib
 import os
 import time
-import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -248,8 +247,7 @@ def escribir(
     """
     apartado: str | None = None
     if documentos.exigir_destino_libre(ruta, sobrescribir):
-        apartado = f"{ruta}.se-{uuid.uuid4().hex[:8]}.bak"
-        os.replace(ruta, apartado)
+        apartado = documentos.apartar(ruta)
     try:
         formato.exportar(doc, ruta)
         tamano = verificar_archivo(ruta)
