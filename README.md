@@ -1040,7 +1040,7 @@ Validados el 2026-11-23 (croquis con arcos y relaciones 2D, el 2026-11-24) contr
 | Brida de chapa (solo para armar la prueba) | `ModelingMode = seModelingModeSynchronous` antes del tab + `Flanges.AddSync` | verificado; en modo ordenado `Flanges.Add*` no resuelve |
 | `se com` | `getattr` / `setattr` sobre late binding | verificado con `Documents.Item(...)`, `Models.Item(1)...`, `DisplayAlerts` |
 | `se run` | `main(app, args)` en el hilo STA | verificado con un script de solo lectura |
-| hresult de "ocupado" | `RPC_E_CALL_REJECTED` / `RPC_E_SERVERCALL_RETRYLATER` | no se vio ninguno durante las pruebas |
+| hresult de "ocupado" | `RPC_E_CALL_REJECTED` / `RPC_E_SERVERCALL_RETRYLATER` | no se pudo provocar (2026-11-25): Solid Edge 2026 no rechaza llamadas, las atiende o las encola (ver "Solid Edge ocupado") |
 
 ## Códigos de salida
 
@@ -1056,6 +1056,28 @@ Son estables entre versiones; los fija un test (`tests/test_errores.py`).
 | 5 | recurso no encontrado (documento, variable...) | `doc_no_encontrado` |
 | 6 | operación bloqueada (`--readonly`, `se run` sin flag) o no soportada | `solo_lectura`, `no_soportado` |
 | 7 | Solid Edge ocupado tras agotar los reintentos | `ocupado` |
+
+### Solid Edge ocupado (exit 7)
+
+`ocupado` sale cuando una llamada COM falla con `RPC_E_CALL_REJECTED` (0x80010001) o
+`RPC_E_SERVERCALL_RETRYLATER` (0x8001010A) diez veces seguidas (una cada 0,5 s). Son los códigos
+estándar de un servidor COM que rechaza llamadas, pero **no se pudieron provocar** contra Solid
+Edge 2026 226.00.01.04 (2026-11-25). Lo que se probó, con un proceso A ocupando a Solid Edge y otro
+B llamando (`se status`, `se docs list`, `se com get Version` y `Application.Version` por pywin32
+sin reintentos):
+
+| cómo se ocupó a Solid Edge (A) | qué recibió B |
+|---|---|
+| diálogo modal dentro de una llamada COM: `SaveCopyAs` a un archivo existente con `DisplayAlerts = True` ("This file exists. Do you want to overwrite it?"; A quedó bloqueado 39,8 s) | respuesta normal en menos de 1 s, también en escrituras (`docs new part`, `sketch rect`). Al elegir "No", la llamada de A devolvió 0x80020009 (scode 0x80070057) y el archivo quedó intacto |
+| diálogo modal abierto desde la interfaz: `StartCommand(25065)` ("About Solid Edge"; `StartCommand` vuelve enseguida) | respuesta normal en menos de 1 s |
+| llamadas largas: perfil con 900 círculos (`End` 2,5 s), `AddFiniteExtrudedProtrusion` (3,5 s) y `Recompute` (3,1 s) | 2158 llamadas en 120 s, ninguna con error; las que llegaron durante una llamada larga esperaron en cola (latencia máxima 3,38 s) |
+
+Así que con Solid Edge trabado, `se` espera en vez de fallar: no hay timeout. Un diálogo modal
+que Solid Edge abra en medio de un comando deja a ese comando esperando hasta que alguien lo
+cierre; por eso los comandos validan antes lo que abriría uno (destino existente, weldment sin
+plantilla). El mapeo y los reintentos quedan como están porque no molestan y cubren a otros
+servidores o versiones. Al pedir un fondo inexistente (`Sheets.Item("A5-Sheet")`) Solid Edge
+responde `RPC_E_SERVERFAULT` (0x80010105): eso es un error COM común (exit 4), no "ocupado".
 
 ## Forma de `--json`
 
