@@ -130,3 +130,19 @@ def test_tiempo_agotado_mensaje_y_detalles():
         "esperado_s": 5.3,
         "cancelacion": "cancelada",
     }
+
+
+def test_traducir_com_error_agrega_el_scode_si_difiere_del_hresult():
+    # Solid Edge responde 0x80020009 (DISP_E_EXCEPTION) y deja el error real en el scode.
+    crudo = ComErrorFalso(0x80020009, "Exception occurred.", (0, None, None, None, 0, -2147467259))
+
+    error = traducir_com_error(crudo)
+
+    assert isinstance(error, ErrorCom) and error.hresult == 0x80020009
+    assert error.details == {"scode": "0x80004005"}
+
+
+def test_traducir_com_error_no_repite_un_scode_igual_al_hresult():
+    error = traducir_com_error(com_error(0x80004005, "Error", "No se pudo"))
+
+    assert "scode" not in error.details

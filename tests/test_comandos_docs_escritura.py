@@ -1,7 +1,7 @@
 """`se docs save|save-as|close` sobre el COM falso."""
 
 import pytest
-from com_falso import com_error
+from com_falso import com_error, ruta_de_largo
 
 
 def nombres(llamadas):
@@ -402,3 +402,16 @@ def test_save_as_con_overwrite_y_timeout_conserva_el_apartado(
         assert archivo.read() == b"original"
     assert not destino.exists()
     assert app_falsa._alertas is True
+
+
+def test_save_as_con_ruta_de_260_caracteres_es_exit_2_sin_tocar_com(cli, app_falsa, tmp_path):
+    app_falsa.agregar_documento("A.par", ruta="C:\\p\\A.par", sucio=True)
+    destino = ruta_de_largo(tmp_path, 260, ".par")
+    assert len(str(destino)) == 260
+
+    r, sobre = cli("docs", "save-as", str(destino))
+
+    assert r.exit_code == 2 and sobre["error"]["code"] == "argumento_invalido"
+    assert "260" in sobre["error"]["message"]
+    assert sobre["error"]["details"]["largo"] == 260
+    assert app_falsa.escrituras == []

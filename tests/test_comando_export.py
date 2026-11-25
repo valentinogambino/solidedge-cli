@@ -1,7 +1,7 @@
 """`se export` de un documento (activo o `--doc`) sobre el COM falso."""
 
 import pytest
-from com_falso import com_error
+from com_falso import ColeccionFalsa, ComErrorFalso, com_error, ruta_de_largo
 
 
 def _doc(app, tmp_path, nombre="Pieza.par", tipo=1, **opciones):
@@ -302,3 +302,97 @@ def test_overwrite_con_timeout_conserva_el_apartado(cli, app_falsa, sta, monkeyp
     with open(apartado, "rb") as archivo:
         assert archivo.read() == b"viejo"
     assert not existente.exists()
+
+
+# --- Causas de un fallo de SaveCopyAs (verificadas en vivo, 2026-11-25) -------------------------
+
+
+def _dce_sin_detalles(scode=0x80004005):
+    """Lo que da Solid Edge: `DISP_E_EXCEPTION` sin descripción y con el error real en el scode."""
+    return ComErrorFalso(0x80020009, "Exception occurred.", (0, None, None, None, 0, scode - 2**32))
+
+
+@pytest.mark.parametrize("formato", ["stl", "x_t", "igs"])
+def test_pieza_sin_geometria_a_formato_que_la_exige_es_exit_6_claro(
+    cli, app_falsa, tmp_path, formato
+):
+    doc = _doc(app_falsa, tmp_path)
+    doc.fallar("SaveCopyAs", _dce_sin_detalles())
+
+    r, sobre = cli("export", "--format", formato)
+
+    error = sobre["error"]
+    assert r.exit_code == 6 and error["code"] == "no_soportado"
+    assert "no tiene geometría" in error["message"] and formato in error["message"]
+    assert error["hresult"] == "0x80020009"
+    assert error["details"]["causa"] == "documento_vacio"
+    assert error["details"]["scode"] == "0x80004005"
+    assert not (tmp_path / f"Pieza.{formato}").exists()
+
+
+def test_ensamble_sin_ocurrencias_a_stl_es_exit_6(cli, app_falsa, tmp_path):
+    doc = _doc(app_falsa, tmp_path, nombre="Conj.asm", tipo=3)
+    doc.fallar("SaveCopyAs", _dce_sin_detalles())
+
+    r, sobre = cli("export", "--format", "stl")
+
+    assert r.exit_code == 6 and sobre["error"]["details"]["causa"] == "documento_vacio"
+
+
+def test_pieza_con_geometria_que_falla_no_se_acusa_de_vacia(cli, app_falsa, tmp_path):
+    doc = _doc(app_falsa, tmp_path)
+    doc.Models = ColeccionFalsa([object()])
+    doc.fallar("SaveCopyAs", _dce_sin_detalles())
+
+    r, sobre = cli("export", "--format", "stl")
+
+    error = sobre["error"]
+    assert r.exit_code == 4 and error["code"] == "com_error"
+    assert "no dio detalles" in error["message"] and "260" in error["message"]
+    assert error["hresult"] == "0x80020009" and error["details"]["scode"] == "0x80004005"
+    assert "causa" not in error["details"]
+
+
+def test_step_de_pieza_vacia_no_se_diagnostica_como_vacia(cli, app_falsa, tmp_path):
+    # STEP se escribe aunque no haya geometría: un fallo ahí es otra cosa.
+    doc = _doc(app_falsa, tmp_path)
+    doc.fallar("SaveCopyAs", _dce_sin_detalles())
+
+    r, sobre = cli("export", "--format", "step")
+
+    assert r.exit_code == 4 and "causa" not in sobre["error"]["details"]
+
+
+def test_export_con_ruta_de_260_caracteres_es_exit_2_sin_tocar_com(cli, app_falsa, tmp_path):
+    _doc(app_falsa, tmp_path)
+    salida = ruta_de_largo(tmp_path, 260, ".stp")
+    assert len(str(salida)) == 260
+
+    r, sobre = cli("export", "--format", "step", "--out", str(salida))
+
+    error = sobre["error"]
+    assert r.exit_code == 2 and error["code"] == "argumento_invalido"
+    assert error["details"]["largo"] == 260 and error["details"]["maximo"] == 259
+    assert _copias(app_falsa) == []
+
+
+def test_export_con_ruta_de_259_caracteres_llega_a_solid_edge(cli, app_falsa, tmp_path):
+    _doc(app_falsa, tmp_path)
+    salida = ruta_de_largo(tmp_path, 259, ".stp")
+    salida.parent.mkdir(parents=True)
+    assert len(str(salida)) == 259
+
+    r, _ = cli("export", "--format", "step", "--out", str(salida))
+
+    assert r.exit_code == 0 and len(_copias(app_falsa)) == 1
+
+
+def test_lote_con_ruta_de_salida_larga_falla_ese_archivo_con_exit_2(tmp_path):
+    # El lote no pasa por `validar_destino`: lo cubre `escribir`.
+    from se_cli.core import exportar
+    from se_cli.core.errors import ArgumentoInvalido
+
+    with pytest.raises(ArgumentoInvalido, match="260"):
+        exportar.escribir(
+            object(), exportar.FORMATOS["step"], str(ruta_de_largo(tmp_path, 262, ".stp")), False
+        )

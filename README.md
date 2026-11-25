@@ -768,6 +768,23 @@ con la de otro formato da exit 2) o una carpeta existente. Si la salida ya exist
 por otro programa, exit 6 con el original intacto: ver `docs save-as`). Después de
 exportar se verifica que el archivo exista y pese más de 0 bytes; si no, exit 4.
 
+Cuando `SaveCopyAs` falla, Solid Edge devuelve `0x80020009` (`DISP_E_EXCEPTION`) sin texto; el error
+real viene en `error.details.scode` (`E_FAIL`, `E_ABORT`, `E_POINTER`...: no dice la causa). Causas
+confirmadas en vivo (2026-11-25), todas a rutas nuevas:
+
+- **Documento sin geometría** (pieza o chapa sin ninguna operación, ensamble sin ocurrencias) a
+  `stl`, `x_t` o `igs` (en un ensamble vacío, `stl` e `igs`; su `x_t` sale): exit 6 `no_soportado`
+  con `details.causa: "documento_vacio"`. STEP sí se escribe vacío.
+- **Ruta absoluta de 260 caracteres o más** (`SaveCopyAs` y `SaveAs`; 259 se guarda): exit 2 antes de
+  tocar Solid Edge, con `details.largo` y `details.maximo`.
+- **Error sin explicación** (por ejemplo, `dxf` de un Draft en esta máquina da `E_FAIL` aun con
+  vistas, causa sin determinar): exit 4 con un mensaje que dice qué revisar y el `hresult` original.
+
+No son causas: documento nunca guardado, ruta con espacios o acentos, barra normal, extensión que
+no corresponde al tipo (`SaveCopyAs` no falla: con una extensión desconocida escribe el formato nativo; la
+CLI ya exige la extensión del formato) ni carpeta inexistente (Solid Edge devuelve OK sin escribir
+nada; la CLI la rechaza antes con exit 2).
+
 ```powershell
 se --json export .\*.par --format step --out C:\salida   # lote: Python expande el glob
 se --json export .\piezas --format stl --recursive

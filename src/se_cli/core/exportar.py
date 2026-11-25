@@ -21,8 +21,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from se_cli.core import acceso, documentos
-from se_cli.core.acceso import leer
-from se_cli.core.errors import ArgumentoInvalido, ErrorCom
+from se_cli.core.acceso import leer, opcional
+from se_cli.core.errors import ArgumentoInvalido, ErrorCom, NoSoportado, SeError, traducir
 
 TIPOS_SOLIDOS = ("part", "sheetmetal", "assembly")
 TIPOS_DRAFT = ("draft",)
@@ -231,6 +231,58 @@ def verificar_archivo(ruta: str) -> int:
     return tamano
 
 
+# Verificado en vivo (Solid Edge 226.00.01.04, 2026-11-25): sin geometría, STL, Parasolid e IGES de
+# una pieza o chapa fallan con `0x80020009` (scode `E_FAIL`, `E_ABORT` o `E_POINTER`); STEP sí se
+# escribe. En un ensamble vacío fallan STL e IGES, y Parasolid sale.
+FORMATOS_QUE_EXIGEN_CUERPO = frozenset({"stl", "x_t", "igs"})
+
+
+def documento_vacio(doc: Any) -> bool | None:
+    """True si la pieza, chapa o ensamble no tiene geometría; None si no se pudo saber."""
+    base = tipo_base(acceso.tipo_de(doc))
+    if base in ("part", "sheetmetal"):
+        coleccion = opcional(lambda: doc.Models)
+    elif base == "assembly":
+        coleccion = opcional(lambda: doc.Occurrences)
+    else:
+        return None
+    if coleccion is None:
+        return None
+    cantidad = opcional(lambda: coleccion.Count)
+    return None if cantidad is None else int(cantidad) == 0
+
+
+def explicar_fallo(doc: Any, formato: Formato, ruta: str, error: Exception) -> SeError | None:
+    """Mensaje claro para un error COM de `SaveCopyAs`, o None si no hay nada que agregar.
+
+    Un documento sin geometría exportado a STL, Parasolid o IGES da `NoSoportado` (exit 6). Un
+    error sin descripción de Solid Edge (solo `0x80020009`) conserva el HRESULT y dice qué revisar.
+    Lo demás (ocupado, desconectado, errores con texto propio) sigue como estaba.
+    """
+    traducido = traducir(error)
+    if type(traducido) is not ErrorCom:
+        return None
+    detalles = {**(traducido.details or {}), "ruta": ruta, "formato": formato.clave}
+    if formato.clave in FORMATOS_QUE_EXIGEN_CUERPO and documento_vacio(doc):
+        detalles["causa"] = "documento_vacio"
+        return NoSoportado(
+            f"No se puede exportar a {formato.clave}: el documento no tiene geometría. Creá al "
+            "menos una operación antes (STEP sí admite un documento vacío).",
+            hresult=traducido.hresult,
+            details=detalles,
+        )
+    if "excepinfo" not in detalles:
+        return ErrorCom(
+            f"Solid Edge no pudo exportar a {formato.clave} y no dio detalles. Revisá que la "
+            f"ruta tenga menos de {documentos.MAX_RUTA + 1} caracteres, que la carpeta permita "
+            "escribir, que el documento tenga contenido para ese formato y que Solid Edge no "
+            "tenga un diálogo abierto.",
+            hresult=traducido.hresult,
+            details=detalles,
+        )
+    return None
+
+
 def escribir(
     doc: Any,
     formato: Formato,
@@ -245,8 +297,15 @@ def escribir(
     con el destino ocupado da exit 6. `verificar(ruta)` corre sobre el archivo escrito (si
     levanta, se lo deshace igual que a un archivo vacío).
     """
+    documentos.exigir_ruta_corta(ruta)
     with documentos.respaldo(ruta, sobrescribir, limpiar_destino=True):
-        formato.exportar(doc, ruta)
+        try:
+            formato.exportar(doc, ruta)
+        except Exception as error:
+            explicado = explicar_fallo(doc, formato, ruta, error)
+            if explicado is None:
+                raise
+            raise explicado from error
         tamano = verificar_archivo(ruta)
         if verificar is not None:
             verificar(ruta)
@@ -307,8 +366,10 @@ __all__ = [
     "ALIAS_DE_FORMATO",
     "FORMATOS",
     "Formato",
+    "documento_vacio",
     "escribir",
     "exigir_compatible",
+    "explicar_fallo",
     "exportar_individual",
     "formato_de",
     "nombre_de_salida",
