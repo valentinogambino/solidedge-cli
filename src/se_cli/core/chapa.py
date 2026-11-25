@@ -134,8 +134,8 @@ def _causa_probable(doc: Any) -> dict[str, Any]:
         return {
             "causa_probable": (
                 f"La base de la chapa es una operación de pieza ({base['nombre']}), no un Tab: "
-                "Solid Edge no la puede desarrollar (es lo que crea `se extrude` como primera "
-                "operación en un documento de chapa)."
+                "Solid Edge no la puede desarrollar. La base de chapa se crea con "
+                "`se sheetmetal tab`."
             ),
             "base": {"nombre": base["nombre"], "tipo": base["tipo"]},
         }

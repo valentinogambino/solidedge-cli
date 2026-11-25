@@ -205,3 +205,34 @@ def test_flat_dxf_create_de_una_base_de_pieza_da_exit_6_clasificado(tmp_path):
         assert not (tmp_path / "maciza.dxf").exists()
     finally:
         _cerrar(chapa.name)
+
+
+@pytest.mark.live
+def test_chapa_entera_por_la_cli_tab_agujero_y_desarrollo(tmp_path):
+    r, sobre = _correr("docs", "new", "sheetmetal")
+    assert r.exit_code == 0, sobre
+    nombre = sobre["data"]["nombre"]
+    chapa = tmp_path / "por_cli.psm"
+    try:
+        d = ["--doc", nombre]
+        r, sobre = _correr("sketch", "rect", "--width", "100mm", "--height", "50mm", *d)
+        assert r.exit_code == 0, sobre
+        r, sobre = _correr("extrude", "1mm", *d)  # la base de una chapa no es una protrusión
+        assert r.exit_code == 6 and "sheetmetal tab" in sobre["error"]["details"]["hint"], sobre
+
+        r, sobre = _correr("sheetmetal", "tab", *d)
+        assert r.exit_code == 0, sobre
+        assert sobre["data"]["nombre"] == "Tab_1"
+        assert sobre["data"]["volumen_si"] == pytest.approx(0.1 * 0.05 * 0.001, rel=1e-6)
+
+        r, sobre = _correr("hole", "--at", "50mm,25mm", "--diameter", "8mm", "--through", *d)
+        assert r.exit_code == 0, sobre
+        r, sobre = _correr("docs", "save-as", str(chapa), nombre)
+        assert r.exit_code == 0, sobre
+        nombre = chapa.name
+
+        r, sobre = _correr("sheetmetal", "flat-dxf", "--create", "--doc", nombre)
+        assert r.exit_code == 0, sobre
+        assert _entidades_dxf(tmp_path / "por_cli.dxf") == {"LINE": 4, "CIRCLE": 1}
+    finally:
+        _cerrar(nombre)

@@ -349,7 +349,9 @@ En una **chapa en modo sincrónico** Solid Edge rechaza `Suppress` (verificado e
 Todos aceptan `--doc <selector>` (por defecto el activo), valores con unidad (`10mm`, `45deg`; sin
 unidad es SI: metros y radianes) y modifican: `--readonly` los bloquea (exit 6) y `--dry-run`
 informa qué harían sin tocar COM. Escriben con `DisplayAlerts` apagado. Solo funcionan en `part` y
-`sheetmetal` en **modo ordenado**; en un documento sincrónico dan exit 2 con la explicación.
+`sheetmetal` en **modo ordenado**; en un documento sincrónico dan exit 2 con la explicación. En una
+chapa la base es un Tab (`se sheetmetal tab`): `extrude` y `revolve` como primera operación de un
+`.psm` dan exit 6 (ver `se sheetmetal tab`).
 
 **Planos** (verificado en vivo con la plantilla de Part): `RefPlanes.Item(1)` es `top` (plano XY,
 normal +Z), `Item(2)` es `right` (plano YZ, normal +X) e `Item(3)` es `front` (plano XZ, normal
@@ -485,6 +487,9 @@ ambos lados del plano. Con `--cut` corta (`ExtrudedCutouts.AddFiniteMulti`; sin 
 exit 2) y devuelve `operacion: "corte"` y `volumen_quitado_si`. Solid Edge **no da error** si el corte
 no toca material (crea una operación vacía): el comando compara `Body.Volume` antes y después, y si
 no cambió deshace la operación (`Feature.Delete`) y sale con exit 2 sugiriendo `--direction reverse`.
+En una chapa **sin modelo base**, `extrude` (sin `--cut`) da exit 6 (`no_soportado`) sin tocar nada,
+con `details.hint` que sugiere `se sheetmetal tab`: Solid Edge crearía una `ExtrudedProtrusion` que no
+se puede desarrollar. Sobre un Tab, `extrude` agrega material normalmente.
 
 ### `se revolve`
 
@@ -496,7 +501,8 @@ El eje se define con `--axis x|y`: la recta `y=0` (`x`) o `x=0` (`y`) del plano 
 agrega al perfil una línea de construcción por el origen (`ToggleConstruction`) y la marca como eje
 (`Profile.SetAxisOfRevolution`, que se puede llamar con el perfil ya cerrado); el perfil tiene que
 quedar de un solo lado del eje. El ángulo por defecto es `360deg` (de 0 a 360deg). Primera operación:
-`Models.AddFiniteRevolvedProtrusion`; después, `RevolvedProtrusions.AddFiniteMulti`.
+`Models.AddFiniteRevolvedProtrusion`; después, `RevolvedProtrusions.AddFiniteMulti`. Como `extrude`,
+en una chapa sin modelo base da exit 6 sin tocar el perfil (no le agrega el eje).
 
 ### `se hole`
 
@@ -780,6 +786,31 @@ y respetan `--readonly` y `--dry-run`.
   se ven en esa vista: en una caja extruida, la frontal da la altura de la extrusión y la
   superior no suma las del croquis.
 
+### `se sheetmetal tab`
+
+```powershell
+se --json sheetmetal tab [--profile 1] [--direction normal|reverse] [--doc Chapa.psm]
+# {"ok": true, "data": {"operacion": "tab", "nombre": "Tab_1", "direccion": "normal", "perfil": 1, "modelo_base": true, "volumen_si": 5e-06}, "error": null}
+```
+Crea la **base de una chapa** (`Models.AddBaseTab(perfil, lado)`) con un perfil cerrado de `se sketch`
+(por defecto, el último). El espesor es el del material de la chapa, no se pasa. `normal` pone el
+material del lado de la normal del plano del perfil (`igRight`) y `reverse`, del otro (`igLeft`);
+`symmetric` u otro valor, exit 2. Solo en `sheetmetal` en modo ordenado (otro tipo o sincrónico,
+exit 2) y sin modelo base (si ya tiene, exit 2: para agregar material, `se extrude`). Sin perfiles,
+exit 5. `--readonly` da exit 6 y `--dry-run` informa el plan sin COM.
+
+Recorrido verificado en vivo (2026-11-25, test `test_chapa_entera_por_la_cli_tab_agujero_y_desarrollo`):
+
+```powershell
+se docs new sheetmetal
+se sketch rect --width 100mm --height 50mm
+se sheetmetal tab                                     # Tab_1, 100 x 50 x 1 mm (5e-6 m3)
+se hole --at 50mm,25mm --diameter 8mm --through
+se docs save-as C:\p\Chapa.psm
+se sheetmetal flat-dxf --create                       # DXF con 4 LINE y 1 CIRCLE
+```
+`AddBaseTab` con `igRight` da el Tab de z = 0 a +1 mm y con `igLeft`, de -1 mm a 0.
+
 ### `se sheetmetal flat-dxf`
 
 ```powershell
@@ -834,8 +865,9 @@ cierra, la reabre y recién ahí exporta (en una misma sesión el DXF puede sali
   con el `hresult`) **sin guardar** la chapa. `error.details` trae `causa_probable`, `base` (la
   primera operación del modelo), `cara`, `arista`, `documento_guardado: false`,
   `desarrollo_vacio_en_sesion` y un `hint`. Lo que se sabe que no se desarrolla: una chapa cuya
-  base es una operación de pieza (`ExtrudedProtrusion` o `RevolvedProtrusion`, lo que crea
-  `se extrude` como primera operación en un `.psm`), con cualquier arista y espesor.
+  base es una operación de pieza (`ExtrudedProtrusion` o `RevolvedProtrusion`, por ejemplo hecha
+  por script; la CLI ya no la crea y la base de chapa sale de `se sheetmetal tab`), con cualquier
+  arista y espesor.
 - **Limitación**: el intento fallido deja en la sesión un `FlatPatternModel` vacío
   (`FlatPatterns.Count == 0`) que la API no deja borrar (`FlatPatternModel` no tiene `Delete`). No
   cuenta como desarrollo (sin `--create` sigue siendo exit 5, no un DXF vacío), un nuevo `--create`
