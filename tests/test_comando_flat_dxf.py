@@ -78,6 +78,30 @@ def test_chapa_sin_desarrollo_da_exit_5_con_explicacion(cli, app_falsa, tmp_path
     assert r.exit_code == 5 and sobre["error"]["code"] == "doc_no_encontrado"
     assert "flat pattern" in sobre["error"]["message"] and "Solid Edge" in sobre["error"]["message"]
     assert app_falsa.escrituras == [] and list(tmp_path.iterdir()) == []
+    detalles = sobre["error"]["details"]
+    assert detalles["documento"] == "Chapa.psm" and detalles["cambios_pendientes"] is False
+    assert "--create" in detalles["hint"] and "guarda la chapa" in detalles["hint"]
+    assert "cambio pendiente" in detalles["hint"]
+
+
+def test_sin_desarrollo_avisa_si_create_guardaria_cambios_pendientes(cli, app_falsa, tmp_path):
+    con_chapa(_chapa(app_falsa, tmp_path, sucio=True), con_desarrollo=False)
+
+    r, sobre = cli("sheetmetal", "flat-dxf")
+
+    assert r.exit_code == 5 and sobre["error"]["details"]["cambios_pendientes"] is True
+    assert app_falsa.escrituras == []
+
+
+def test_sin_desarrollo_con_dirty_ilegible_no_cambia_el_codigo(cli, app_falsa, tmp_path):
+    doc = _chapa(app_falsa, tmp_path)
+    con_chapa(doc, con_desarrollo=False)
+    doc.fallar("Dirty", RuntimeError("sin Dirty"))
+
+    r, sobre = cli("sheetmetal", "flat-dxf")
+
+    assert r.exit_code == 5 and sobre["error"]["details"]["cambios_pendientes"] is None
+    assert "--create" in sobre["error"]["details"]["hint"]
 
 
 def test_doc_elige_la_chapa(cli, app_falsa, tmp_path):
