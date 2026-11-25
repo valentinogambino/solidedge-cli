@@ -1038,3 +1038,26 @@ Abrí Solid Edge antes de usar las herramientas. Probá `status` para comprobar
 qué documento está activo. Usá rutas absolutas cuando le pidas a Claude que
 abra, inserte o exporte archivos. Para ejecutar el servidor desde el repo,
 usá `uv run --extra mcp se-mcp`.
+
+### Herramientas
+
+El servidor expone 15 herramientas, todas sobre las mismas funciones de `src/se_cli/core/` que la
+CLI y con la misma respuesta `{ok, data, error}` (`error.code` igual al de la tabla de códigos de
+salida). Cada una valida sus argumentos contra su esquema (claves de más o tipos que no coinciden
+se rechazan antes de tocar Solid Edge).
+
+| herramienta | comando de la CLI |
+|---|---|
+| `status`, `connect` | `se status`, `se connect` (no lanza Solid Edge) |
+| `docs_list`, `docs_open`, `docs_save` | `se docs list`, `se docs open`, `se docs save` |
+| `vars_get`, `vars_set` | `se vars get`, `se vars set` |
+| `mass` | `se mass` |
+| `export` | `se export` (un documento; `step`, `stl`, `pdf` y `dxf`) |
+| `features_list` | `se features list` |
+| `sketch_profile` | `se sketch profile` |
+| `extrude` | `se extrude` |
+| `sheetmetal_tab` | `se sheetmetal tab` (base de una chapa; `direction` `normal` o `reverse`) |
+| `asm_add`, `asm_tree` | `se asm add`, `se asm tree` |
+
+No están `com set`/`com invoke`, `run` ni `quit`. En una chapa sin base, `extrude` sin `cut` da
+`no_soportado` con un `hint` hacia `se sheetmetal tab`: por MCP es la herramienta `sheetmetal_tab`.
