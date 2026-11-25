@@ -7,7 +7,10 @@ from collections.abc import Callable
 from threading import Lock
 from typing import Annotated, Any, Literal
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import best_match
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 from typing_extensions import TypedDict
 
@@ -24,10 +27,35 @@ from se_cli.core import (
     unidades,
     variables,
 )
-from se_cli.core.errors import traducir
+from se_cli.core.errors import SeError, hresult_de, traducir
 from se_cli.core.session import Sesion
 
-mcp = FastMCP("Solid Edge")
+
+class ServidorSe(FastMCP):
+    """FastMCP que rechaza argumentos fuera del esquema (claves de más, tipos que no coinciden).
+
+    FastMCP ignora las claves extra y convierte tipos; acá se valida el JSON crudo contra el
+    esquema publicado, que declara `additionalProperties: false`.
+    """
+
+    async def list_tools(self):
+        herramientas = await super().list_tools()
+        for herramienta in herramientas:
+            herramienta.inputSchema = {**herramienta.inputSchema, "additionalProperties": False}
+        return herramientas
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]):
+        herramienta = self._tool_manager.get_tool(name)
+        if herramienta is None:
+            raise ToolError(f"Herramienta desconocida: {name}.")
+        esquema = {**herramienta.parameters, "additionalProperties": False}
+        error = best_match(Draft202012Validator(esquema).iter_errors(arguments))
+        if error is not None:
+            raise ToolError(f"Argumentos inválidos: {error.message}")
+        return await super().call_tool(name, arguments)
+
+
+mcp = ServidorSe("Solid Edge")
 _candado = Lock()
 Doc = Annotated[
     str | None, Field(description="Índice desde 1, nombre o ruta. Por defecto, activo.")
@@ -52,7 +80,12 @@ def _respuesta():
     try:
         yield sobre, completar
     except Exception as error:
-        sobre.update(result.fallo(traducir(error)))
+        traducido = traducir(error)
+        sobre.update(result.fallo(traducido))
+        if not isinstance(error, SeError) and hresult_de(error) is None:
+            # Excepción no prevista (`interno`): su texto puede traer rutas u otros datos locales.
+            sobre["error"]["message"] = "Solid Edge no pudo completar la operación."
+            sobre["error"].pop("details", None)
 
 
 def _sesion(fn: Callable[[Sesion], Any]) -> Any:
