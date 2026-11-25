@@ -1,5 +1,8 @@
 """`--timeout` contra un diálogo modal real de Solid Edge. No corre por defecto.
 
+Las pruebas que abren un diálogo modal visible en Solid Edge durante unos segundos requieren
+`SE_LIVE_MODAL=1`, además de la marca `live`.
+
 Cada prueba abre una pieza propia en una carpeta temporal, provoca el diálogo «This file exists»
 con `SaveCopyAs` sobre un archivo existente (con `DisplayAlerts = True`) y comprueba que el plazo
 corta la espera, que la sesión sigue respondiendo y que el proceso termina con exit 7. El
@@ -10,6 +13,7 @@ y pide cerrarlo a mano. Al terminar cierra solo el documento que creó, sin guar
 import asyncio
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -30,6 +34,14 @@ from se_cli.core.sta import HiloSta
 
 PLAZO = 5
 LLAMADAS_DE_COSTO = 500
+
+modal = pytest.mark.skipif(
+    os.environ.get("SE_LIVE_MODAL") != "1",
+    reason=(
+        "Abre un diálogo modal en Solid Edge: correr solo con SE_LIVE_MODAL=1 "
+        "y avisando antes al usuario."
+    ),
+)
 
 # Comando de prueba que corre por el mismo `ejecutar` que usa la CLI real y cuelga a propósito.
 CODIGO_CLI = """
@@ -170,6 +182,7 @@ def _abrir_modal(sesion: Sesion, b: Path) -> TiempoAgotado:
 
 
 @pytest.mark.live
+@modal
 def test_h1_h3_cancela_y_la_sesion_sigue(pieza):
     _, b, hwnd, original = pieza
     sesion = Sesion(plazo=PLAZO)
@@ -193,6 +206,7 @@ def test_h1_h3_cancela_y_la_sesion_sigue(pieza):
 
 
 @pytest.mark.live
+@modal
 def test_plan_b_abandona_y_la_sesion_sigue(pieza, monkeypatch):
     _, b, hwnd, original = pieza
     monkeypatch.setattr(modulo_sta, "CANCELAR_POR_COM", False)
@@ -217,6 +231,7 @@ def test_plan_b_abandona_y_la_sesion_sigue(pieza, monkeypatch):
 
 
 @pytest.mark.live
+@modal
 @pytest.mark.parametrize("modo", ["cancelada", "abandonada"])
 def test_h4_la_cli_termina_con_exit_7(pieza, modo):
     _, b, hwnd, original = pieza
@@ -249,6 +264,7 @@ def test_h4_la_cli_termina_con_exit_7(pieza, modo):
 
 
 @pytest.mark.live
+@modal
 def test_h6_com_invoke_no_abre_el_modal(pieza):
     """`se com invoke` apaga `DisplayAlerts`: el diálogo no aparece y no hay cómo colgarlo."""
     _, b, hwnd, _ = pieza
@@ -282,6 +298,7 @@ def test_costo_de_habilitar_la_cancelacion():
 
 
 @pytest.mark.live
+@modal
 def test_mcp_stdio_ocupado_y_el_servidor_sigue(pieza):
     """Una tool con `timeout` chico devuelve `ocupado` y el `status` siguiente responde."""
     from mcp import ClientSession, StdioServerParameters
