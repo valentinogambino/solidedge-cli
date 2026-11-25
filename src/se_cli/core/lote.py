@@ -128,6 +128,7 @@ def planificar(
     """
     carpeta = None
     if out is not None:
+        documentos.validar_nombres_windows(out)
         carpeta = documentos.ruta_absoluta(out)
         if os.path.isfile(carpeta) or os.path.splitext(carpeta)[1].lower() in formato.extensiones:
             raise ArgumentoInvalido(
@@ -204,6 +205,7 @@ def exportar(
     """
     carpeta = documentos.ruta_absoluta(out) if out is not None else None
     if carpeta is not None:
+        documentos.validar_nombres_windows(out)
         try:
             os.makedirs(carpeta, exist_ok=True)
         except OSError as error:

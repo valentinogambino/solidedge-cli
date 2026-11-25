@@ -81,6 +81,8 @@ def parsear_valor(texto: str) -> Cantidad:
             f"Valor inválido: {texto!r}. Usá un número con unidad opcional (ej. 10mm, 45deg)."
         )
     numero = float(coincidencia.group(1))
+    if not math.isfinite(numero):
+        raise ArgumentoInvalido("El valor tiene que ser un número finito.")
     unidad = coincidencia.group(2)
     if not unidad:
         return Cantidad(numero, None, None)

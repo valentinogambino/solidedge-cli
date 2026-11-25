@@ -14,6 +14,7 @@ import contextlib
 import os
 import uuid
 from collections.abc import Callable
+from pathlib import PureWindowsPath
 from typing import Any, TypeVar
 
 from se_cli.core.constants import DocumentTypeConstants
@@ -103,12 +104,46 @@ def validar_tipo_nuevo(tipo: str, plantilla: str | None = None) -> str:
     return clave
 
 
+def _sin_prefijo_largo(ruta: str) -> str:
+    r"""Quitá el prefijo de ruta larga o de dispositivo (`\\?\` y `\\.\`); `UNC` vuelve a `\\`."""
+    ruta = ruta.replace("/", "\\")
+    if ruta.startswith(("\\\\?\\", "\\\\.\\")):
+        ruta = ruta[4:]
+        if ruta[:4].upper() == "UNC\\":
+            ruta = "\\\\" + ruta[4:]
+    return ruta
+
+
+def validar_nombres_windows(ruta: str) -> None:
+    r"""Rechazá (exit 2) nombres que Windows no admite: reservados (CON, NUL, COM1...), con
+    caracteres prohibidos, terminados en punto o espacio, o de más de 255 caracteres.
+
+    Se mira la ruta tal cual y ya absoluta: `abspath` convierte un `NUL` pelado en el
+    dispositivo `\\.\NUL`, que ya no se vería como un nombre. La raíz (letra de unidad,
+    recurso UNC) no se valida. Los dispositivos con prefijo (`\\.\NUL`) se rechazan.
+    """
+    for candidata in (ruta, ruta_absoluta(ruta)):
+        pura = PureWindowsPath(_sin_prefijo_largo(candidata))
+        for parte in pura.parts[1:] if pura.anchor else pura.parts:
+            if (
+                PureWindowsPath(parte).is_reserved()
+                or parte.endswith((".", " "))
+                or len(parte.encode("utf-16-le", errors="surrogatepass")) > 510
+                or any(c in '<>:"|?*' or ord(c) < 32 for c in parte)
+            ):
+                raise ArgumentoInvalido(
+                    f"La ruta de destino contiene un nombre inválido en Windows: {parte!r}.",
+                    details={"ruta": ruta_absoluta(ruta)},
+                )
+
+
 def validar_destino(destino: str, sobrescribir: bool) -> str:
     """Ruta absoluta de destino para `save-as`.
 
     Si ya existe y no se pasó `--overwrite` da `SoloLectura` (exit 6): Solid Edge abriría un
     diálogo modal que `DisplayAlerts` no suprime. La carpeta tiene que existir.
     """
+    validar_nombres_windows(destino)
     absoluta = ruta_absoluta(destino)
     if os.path.isdir(absoluta):
         raise ArgumentoInvalido(f"El destino es una carpeta: {absoluta}")
@@ -117,12 +152,19 @@ def validar_destino(destino: str, sobrescribir: bool) -> str:
             f"La carpeta de destino no existe: {os.path.dirname(absoluta)}",
             details={"ruta": absoluta},
         )
-    if os.path.exists(absoluta) and not sobrescribir:
+    exigir_destino_libre(absoluta, sobrescribir)
+    return absoluta
+
+
+def exigir_destino_libre(absoluta: str, sobrescribir: bool) -> bool:
+    """True si el destino ya existe y se puede reemplazar; sin `sobrescribir` y ocupado, exit 6."""
+    existe = os.path.lexists(absoluta)
+    if existe and not sobrescribir:
         raise SoloLectura(
             f"Ya existe {absoluta}. Usá --overwrite para reemplazarlo.",
             details={"ruta": absoluta},
         )
-    return absoluta
+    return existe
 
 
 # --- Lectura -------------------------------------------------------------------------------
@@ -153,9 +195,11 @@ def buscar_abierto(app: Any, ruta: str) -> Any | None:
     return None
 
 
-def guardar_en(doc: Any, absoluta: str) -> None:
+def guardar_en(
+    doc: Any, absoluta: str, sobrescribir: bool, verificar: Callable[[str], None] | None = None
+) -> None:
     """`SaveAs` de `doc` a `absoluta`, apartando un archivo previo y restaurándolo si falla."""
-    _guardar_en(doc, absoluta)
+    _guardar_en(doc, absoluta, sobrescribir, verificar)
 
 
 def ruta_de(doc: Any) -> str | None:
@@ -372,7 +416,7 @@ def guardar_como(
         _exigir_escribible(doc)
         _leer(doc.Save)
     else:
-        _guardar_en(doc, absoluta)
+        _guardar_en(doc, absoluta, sobrescribir)
     return {
         **descripcion_de(app, doc, indice),
         "guardado": True,
@@ -381,13 +425,17 @@ def guardar_como(
     }
 
 
-def _guardar_en(doc: Any, absoluta: str) -> None:
+def _guardar_en(
+    doc: Any, absoluta: str, sobrescribir: bool, verificar: Callable[[str], None] | None = None
+) -> None:
     apartado: str | None = None
-    if os.path.exists(absoluta):
+    if exigir_destino_libre(absoluta, sobrescribir):
         apartado = f"{absoluta}.se-{uuid.uuid4().hex[:8]}.bak"
         os.replace(absoluta, apartado)
     try:
         _leer(lambda: doc.SaveAs(absoluta))
+        if verificar is not None:
+            verificar(absoluta)
     except BaseException:
         if apartado is not None:
             os.replace(apartado, absoluta)
@@ -521,6 +569,7 @@ __all__ = [
     "estado",
     "guardar",
     "guardar_como",
+    "exigir_destino_libre",
     "guardar_en",
     "listar",
     "nombre_de_tipo",
@@ -530,6 +579,7 @@ __all__ = [
     "ruta_de",
     "salir",
     "validar_destino",
+    "validar_nombres_windows",
     "validar_ruta_existente",
     "validar_tipo_nuevo",
 ]

@@ -17,6 +17,7 @@ se-mcp = "se_cli.mcp_server:main"
 
 [project.optional-dependencies]
 mcp = [
+    "jsonschema>=4.20",
     "mcp>=1.30,<2",
 ]
 

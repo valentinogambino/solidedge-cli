@@ -34,6 +34,7 @@ from se_cli.core import unidades
 from se_cli.core.errors import ArgumentoInvalido, DocNoEncontrado
 
 VERSION = 1
+MAX_BYTES_PERFIL = 8 * 1024 * 1024
 TOLERANCIA_POR_DEFECTO = 1e-6  # metros
 
 RAIZ_PERMITIDA = {
@@ -137,14 +138,17 @@ def _plano_de_restriccion(restriccion: dict[str, Any]) -> dict[str, Any]:
 def leer_fuente(fuente: str) -> str:
     """Texto del JSON: archivo, o la entrada estándar con `-`. Archivo inexistente = exit 5."""
     if fuente == "-":
-        data = sys.stdin.buffer.read()
+        data = sys.stdin.buffer.read(MAX_BYTES_PERFIL + 1)
     else:
         ruta = Path(fuente)
         if not ruta.exists():
             raise DocNoEncontrado(f"No existe el archivo de perfil: {fuente}.")
         if not ruta.is_file():
             raise ArgumentoInvalido(f"{fuente} no es un archivo.")
-        data = ruta.read_bytes()
+        with ruta.open("rb") as archivo:
+            data = archivo.read(MAX_BYTES_PERFIL + 1)
+    if len(data) > MAX_BYTES_PERFIL:
+        raise ArgumentoInvalido("El perfil supera el límite de 8 MiB.")
     try:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError as error:
@@ -169,6 +173,8 @@ def parsear_json(texto: str) -> dict[str, Any]:
         ) from None
     except RecursionError:
         raise ArgumentoInvalido("JSON inválido: demasiado anidado.") from None
+    except ValueError:
+        raise ArgumentoInvalido("JSON inválido: número fuera de rango.") from None
     if not isinstance(datos, dict):
         raise ArgumentoInvalido("El perfil tiene que ser un objeto JSON.")
     return datos
@@ -217,7 +223,10 @@ class _Longitudes:
                 raise ArgumentoInvalido(
                     f'{donde}: hay números sin unidad y falta `units` (ej. "units": "mm").'
                 )
-            si = float(dato) * unidades.FACTORES[unidades.LONGITUD][self.unidad]
+            try:
+                si = float(dato) * unidades.FACTORES[unidades.LONGITUD][self.unidad]
+            except OverflowError:
+                raise ArgumentoInvalido(f"{donde}: número fuera de rango.") from None
         if not math.isfinite(si):
             raise ArgumentoInvalido(f"{donde}: no es un número finito.")
         if positivo and si <= 0:

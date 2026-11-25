@@ -63,11 +63,11 @@ def ejecutar(
     salida.forzar_utf8()
     try:
         data = _correr(opciones, fn, modifica, plan, conectar)
+        salida.emitir_ok(data, como_json=opciones.json)
     except Exception as error:  # noqa: BLE001 - todo error se traduce a SeError
         traducido = traducir(error)
         salida.emitir_error(traducido, como_json=opciones.json)
         raise typer.Exit(traducido.exit_code) from None
-    salida.emitir_ok(data, como_json=opciones.json)
 
 
 def _correr(

@@ -275,7 +275,7 @@ def crear(app: Any, plan: Plan, sobrescribir: bool, mantener_abierto: bool) -> d
                 }
             )
 
-        _guardar_draft(draft, plan.draft)
+        _guardar_draft(draft, plan.draft, sobrescribir)
         guardado = True
         resultado: dict[str, Any] = {
             "draft": plan.draft,
@@ -312,10 +312,9 @@ def crear(app: Any, plan: Plan, sobrescribir: bool, mantener_abierto: bool) -> d
                     leer(activo_previo.Activate)
 
 
-def _guardar_draft(draft: Any, destino: str) -> None:
+def _guardar_draft(draft: Any, destino: str, sobrescribir: bool) -> None:
     """`SaveAs` del Draft nuevo. Si el destino existe (ya validado con `--overwrite`), se aparta."""
-    documentos.guardar_en(draft, destino)
-    exportar.verificar_archivo(destino)
+    documentos.guardar_en(draft, destino, sobrescribir, exportar.verificar_archivo)
 
 
 def _descartar(draft: Any) -> None:
