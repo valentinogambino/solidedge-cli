@@ -125,6 +125,8 @@ def validar_nombres_windows(ruta: str) -> None:
     for candidata in (ruta, ruta_absoluta(ruta)):
         pura = PureWindowsPath(_sin_prefijo_largo(candidata))
         for parte in pura.parts[1:] if pura.anchor else pura.parts:
+            if parte in (".", ".."):
+                continue  # navegación, no un nombre
             if (
                 PureWindowsPath(parte).is_reserved()
                 or parte.endswith((".", " "))

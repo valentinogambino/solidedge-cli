@@ -112,6 +112,13 @@ def test_mcp_oculta_rutas_de_excepciones(monkeypatch):
         r"\\?\C:\proyectos\Pieza.par",
         r"\\?\UNC\servidor\recurso\Pieza.par",
         r"D:\Pieza.par",
+        r"..\x.par",
+        r"sub\..\x.par",
+        r"C:\tmp\..\x.par",
+        r"..\..\x.par",
+        r".\x.par",
+        "../x.par",
+        "sub/../x.par",
     ],
 )
 def test_nombres_windows_aceptan_rutas_legitimas(ruta):
@@ -129,11 +136,40 @@ def test_nombres_windows_aceptan_rutas_legitimas(ruta):
         r"C:\x\a b .par ",
         r"C:\x\a?.par",
         r"C:\x\a.par:s",
+        r"..\CON.par",
+        r"..\NUL",
+        r"sub\...\x.par",
+        r"..\x.",
     ],
 )
 def test_nombres_windows_rechazan_nombres_invalidos(ruta):
     with pytest.raises(ArgumentoInvalido):
         documentos.validar_nombres_windows(ruta)
+
+
+@pytest.mark.parametrize("destino", [r"..\Nueva.par", "../Nueva.par", r"..\sub\..\Nueva.par"])
+def test_save_as_acepta_destino_relativo_con_puntos(cli, app_falsa, tmp_path, monkeypatch, destino):
+    app_falsa.agregar_documento("Part1.par")
+    (tmp_path / "sub").mkdir()
+    trabajo = tmp_path / "trabajo"
+    trabajo.mkdir()
+    monkeypatch.chdir(trabajo)
+    respuesta, _ = cli("docs", "save-as", destino)
+    assert respuesta.exit_code == 0
+    assert (tmp_path / "Nueva.par").exists()
+
+
+@pytest.mark.parametrize("destino", [r"..\CON.par", r"..\NUL", r"sub\...\x.par"])
+def test_save_as_rechaza_destino_relativo_invalido(cli, fabrica, destino):
+    respuesta, sobre = cli("docs", "save-as", destino)
+    assert respuesta.exit_code == 2
+    assert sobre["error"]["code"] == "argumento_invalido"
+    assert fabrica.llamadas == 0
+
+
+def test_lote_acepta_carpeta_de_salida_con_puntos(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    lote.planificar([], exportar.formato_de("step"), r"..\salida", False)
 
 
 def test_lote_rechaza_carpeta_de_salida_reservada(tmp_path):
