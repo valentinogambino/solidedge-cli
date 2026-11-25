@@ -110,7 +110,10 @@ se --json docs new part [--template C:\p\base.par]
 # {"ok": true, "data": {"indice": 2, "nombre": "Document2", "ruta": null, "tipo": "part", ...}, "error": null}
 ```
 Tipos: `part`, `assembly`, `draft`, `sheetmetal`, `weldment`. Tipo inválido: exit 2. `weldment`
-exige `--template`.
+exige `--template`. La plantilla va como segundo argumento de `Documents.Add(ProgID, plantilla)`
+(verificado en vivo el 2026-11-25 con las plantillas ISO de Solid Edge; hasta esa fecha `--template`
+pasaba la ruta como ProgID y daba siempre exit 4, 0x80020009). Lo mismo en `draft from-part
+--template`.
 
 ```powershell
 se --json docs save [<doc>]
@@ -974,6 +977,7 @@ Validados el 2026-11-23 (croquis con arcos y relaciones 2D, el 2026-11-24) contr
 | STEP, STL, Parasolid, IGES, PDF, DXF | `doc.SaveCopyAs(ruta)`, el formato sale de la extensión | verificado en pieza, chapa, ensamble y Draft; STEP con cabecera ISO-10303-21, STL binario con 12 triángulos por cubo, `.x_t` con cabecera Parasolid, IGES con sección de inicio |
 | PNG | `View.SaveAsImage(ruta, 1920, 1080)` (Draft: alto o ancho según la hoja) | verificado en pieza, chapa y ensamble (con `View.Fit()` antes); **corregido** en Draft: su `SheetWindow` no tiene `View`, `Fit` y `SaveAsImage` son de la ventana |
 | Draft nuevo | `Documents.Add("SolidEdge.DraftDocument")` | verificado (hoja A2 por defecto) |
+| Documento desde una plantilla | `Documents.Add(ProgID, ruta_de_plantilla)` | verificado (2026-11-25) en pieza y Draft; **corregido**: `Documents.Add(ruta_de_plantilla)` da 0x80020009 (scode CO_E_CLASSSTRING) |
 | Hoja | `ActiveSheet.SheetSetup.SheetSizeOption = igIso<A>Wide` | verificado; **corregido**: además hay que reemplazar el fondo (`ActiveSheet.Background = Sections.BackgroundSection.Sheets.Item("A3-Sheet")`) o el marco y el rotulo salen recortados |
 | Enlace y vistas | `ModelLinks.Add(ruta)`; `DrawingViews.AddPartView`, `AddSheetMetalView`, `AddAssemblyView` con `(enlace, orientación, escala, x, y, 0)` | verificado: los tres existen y `x, y` es el centro de la vista; las vistas quedan dentro de la hoja y sin superponerse |
 | Caja del modelo | `Models.Item(1).Body.GetRange([0]*3, [0]*3)`; ensamble `Occurrence.GetRangeBox` | verificado (devuelve mínimo y máximo); la escala `auto` es razonable |

@@ -978,6 +978,7 @@ TIPO_POR_PROGID = {
     "SolidEdge.DraftDocument": 2,
     "SolidEdge.AssemblyDocument": 3,
     "SolidEdge.SheetMetalDocument": 4,
+    "SolidEdge.WeldmentDocument": 6,
 }
 
 
@@ -1028,12 +1029,14 @@ class DocumentosFalsos(_ConFallos):
         self._tocar("Item")
         return self._documentos[indice - 1]
 
-    def Add(self, prog_id: str) -> DocumentoFalso:
-        self.registro.append(("Documents.Add", prog_id))
+    def Add(self, prog_id: str, plantilla: str | None = None) -> DocumentoFalso:
+        # Como el real (verificado en vivo, 2026-11-25): el primer argumento es siempre el ProgID
+        # y la plantilla va segunda; una ruta como ProgID da 0x80020009 (scode CO_E_CLASSSTRING).
+        self.registro.append(("Documents.Add", prog_id, plantilla))
         self._tocar("Add")
         tipo = TIPO_POR_PROGID.get(prog_id)
         if tipo is None:
-            tipo = TIPO_POR_EXTENSION.get(prog_id.rsplit(".", 1)[-1].lower(), 1)
+            raise com_error(0x80020009, "Exception occurred.")
         return self._agregar(DocumentoFalso(f"Document{len(self._documentos) + 1}", tipo=tipo))
 
     def Open(self, ruta: str) -> DocumentoFalso:

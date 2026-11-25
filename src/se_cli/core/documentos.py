@@ -438,11 +438,14 @@ def _describir_nuevo(app: Any, doc: Any) -> dict[str, Any]:
 def nuevo(app: Any, tipo: str, plantilla: str | None = None) -> dict[str, Any]:
     """Creá un documento del tipo dado, con la plantilla indicada si hay."""
     clave = validar_tipo_nuevo(tipo, plantilla)
+    progid = TIPOS_NUEVOS[clave]
     if plantilla:
-        argumento = validar_ruta_existente(plantilla, "La plantilla")
+        # `Documents.Add(ProgID, plantilla)`: con la ruta sola como primer argumento Solid Edge da
+        # 0x80020009 (CO_E_CLASSSTRING), verificado en vivo el 2026-11-25.
+        ruta = validar_ruta_existente(plantilla, "La plantilla")
+        doc = _leer(lambda: app.Documents.Add(progid, ruta))
     else:
-        argumento = TIPOS_NUEVOS[clave]
-    doc = _leer(lambda: app.Documents.Add(argumento))
+        doc = _leer(lambda: app.Documents.Add(progid))
     return _describir_nuevo(app, doc)
 
 

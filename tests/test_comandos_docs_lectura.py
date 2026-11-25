@@ -188,7 +188,7 @@ def test_new_usa_el_progid_del_tipo(cli, app_falsa, tipo, progid):
     assert r.exit_code == 0
     assert set(sobre["data"]) == CLAVES
     assert sobre["data"]["activo"] is True
-    assert ("Documents.Add", progid) in app_falsa.registro
+    assert ("Documents.Add", progid, None) in app_falsa.registro
 
 
 def test_new_con_plantilla(cli, app_falsa, tmp_path):
@@ -198,7 +198,7 @@ def test_new_con_plantilla(cli, app_falsa, tmp_path):
     r, _ = cli("docs", "new", "sheetmetal", "--template", str(plantilla))
 
     assert r.exit_code == 0
-    assert ("Documents.Add", str(plantilla)) in app_falsa.registro
+    assert ("Documents.Add", "SolidEdge.SheetMetalDocument", str(plantilla)) in app_falsa.registro
 
 
 def test_new_plantilla_inexistente(cli, app_falsa, tmp_path):
@@ -228,6 +228,7 @@ def test_new_weldment_con_plantilla(cli, app_falsa, tmp_path):
     plantilla.write_bytes(b"x")
     r, _ = cli("docs", "new", "weldment", "--template", str(plantilla))
     assert r.exit_code == 0
+    assert ("Documents.Add", "SolidEdge.WeldmentDocument", str(plantilla)) in app_falsa.registro
 
 
 # --- readonly / dry-run -------------------------------------------------------------------

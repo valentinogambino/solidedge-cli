@@ -153,7 +153,7 @@ def test_out_y_plantilla(cli, app_falsa, tmp_path):
 
     assert r.exit_code == 0, r.output
     assert sobre["data"]["draft"] == str(destino / "uno.dft") and (destino / "uno.dft").exists()
-    assert ("Documents.Add", str(plantilla)) in app_falsa.registro
+    assert ("Documents.Add", "SolidEdge.DraftDocument", str(plantilla)) in app_falsa.registro
 
 
 def test_pdf(cli, app_falsa, tmp_path):
