@@ -163,6 +163,21 @@ def validar_nombres_windows(ruta: str) -> None:
                 )
 
 
+# Verificado en vivo (Solid Edge 226.00.01.04, 2026-11-25): `SaveCopyAs` y `SaveAs` fallan con una
+# ruta de 260 caracteres o más (259 todavía se guarda), aunque la carpeta exista.
+MAX_RUTA = 259
+
+
+def exigir_ruta_corta(absoluta: str) -> None:
+    """Exit 2 si la ruta absoluta supera lo que Solid Edge sabe guardar (`MAX_RUTA`)."""
+    if len(absoluta) > MAX_RUTA:
+        raise ArgumentoInvalido(
+            f"La ruta de destino tiene {len(absoluta)} caracteres y Solid Edge no guarda en rutas "
+            f"de {MAX_RUTA + 1} o más. Elegí una ruta más corta: {absoluta}",
+            details={"ruta": absoluta, "largo": len(absoluta), "maximo": MAX_RUTA},
+        )
+
+
 def validar_destino(destino: str, sobrescribir: bool) -> str:
     """Ruta absoluta de destino para `save-as`.
 
@@ -171,6 +186,7 @@ def validar_destino(destino: str, sobrescribir: bool) -> str:
     """
     validar_nombres_windows(destino)
     absoluta = ruta_absoluta(destino)
+    exigir_ruta_corta(absoluta)
     if os.path.isdir(absoluta):
         raise ArgumentoInvalido(f"El destino es una carpeta: {absoluta}")
     if not os.path.isdir(os.path.dirname(absoluta)):
@@ -668,6 +684,7 @@ def salir(app: Any, descartar: bool = False) -> dict[str, Any]:
 
 
 __all__ = [
+    "MAX_RUTA",
     "TIPOS_NUEVOS",
     "abrir",
     "activo",
@@ -682,6 +699,7 @@ __all__ = [
     "guardar",
     "guardar_como",
     "exigir_destino_libre",
+    "exigir_ruta_corta",
     "guardar_en",
     "listar",
     "nombre_de_tipo",

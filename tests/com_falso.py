@@ -28,6 +28,15 @@ class ComErrorFalso(Exception):
         super().__init__(self.hresult, strerror, excepinfo, argerror)
 
 
+def ruta_de_largo(base: Any, largo: int, extension: str) -> Any:
+    """Ruta (sin crearla) dentro de `base` de exactamente `largo` caracteres (carpetas de 50)."""
+    carpeta = base
+    while largo - len(str(carpeta)) - 1 > 120:
+        carpeta = carpeta / ("d" * 50)
+    nombre = largo - len(str(carpeta)) - 1 - len(extension)
+    return carpeta / ("n" * nombre + extension)
+
+
 def com_error(hresult: int, strerror: str = "Error", descripcion: str | None = None):
     """Armá un `ComErrorFalso`, con `excepinfo` si hay descripción."""
     excepinfo = (0, "SolidEdge", descripcion, None, 0, hresult) if descripcion else None
@@ -209,8 +218,9 @@ class DocumentoFalso(_ConFallos):
         return b"dxf-plano"
 
     def _consolidar_fisicas(self) -> None:
-        """Un cálculo con densidad recién se puede leer (`GetPhysicalProperties`) tras guardar."""
-        if self.fisicas_pendientes is not None:
+        """Un cálculo con densidad se puede leer (`GetPhysicalProperties`) tras guardar, pero solo
+        si el documento tiene material: sin él Solid Edge sigue en estado 2 (verificado en vivo)."""
+        if self.fisicas_pendientes is not None and getattr(self, "material", ""):
             self.fisicas_calculadas = self.fisicas_pendientes
             self.fisicas_pendientes = None
 

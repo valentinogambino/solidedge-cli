@@ -230,9 +230,13 @@ Solo pieza, chapa y ensamble; otro tipo de documento da exit 2.
 
 En **pieza y chapa** la lectura sin densidad usa `Model.GetPhysicalProperties` (`Status` 1 = hay
 propiedades guardadas; 2 = no hay, todo en cero). El cálculo con `--density` devuelve los valores
-recalculados en el momento. La lectura posterior sin densidad depende de que Solid Edge devuelva
-propiedades guardadas (ver Limitaciones). `GetUserPhysicalProperties` solo devuelve valores
-cargados a mano. En un **ensamble** no existe cálculo con densidad (`--density` da exit
+recalculados en el momento. **El estado depende del material** (verificado en vivo el 2026-11-25):
+es 1 apenas el documento tiene un material asignado (aun sin guardar) y 2 mientras no lo tenga, aunque
+se haya calculado con `--density` y guardado. Por eso una pieza sin material da exit 2 con
+`error.details` `{"estado_solid_edge": 2, "causa": "sin_material"}` y un mensaje que pide asignar un
+material o pasar `--density`; con `--density` el cálculo sale bien y suma `data.advertencia` (los demás
+campos no cambian). Si hay material y aun así llega el estado 2, el mensaje no culpa al material.
+`GetUserPhysicalProperties` solo devuelve valores cargados a mano. En un **ensamble** no existe cálculo con densidad (`--density` da exit
 6, `no_soportado`): la masa sale de los materiales de las piezas con
 `PhysicalProperties.GetAssemblyPhysicalProperties` (corre `Update()` si está desactualizado, y
 entonces `actualizado: true`); una pieza sin material cuenta con densidad 1 kg/m3 (`data.piezas_sin_material` las lista por
@@ -768,6 +772,23 @@ con la de otro formato da exit 2) o una carpeta existente. Si la salida ya exist
 por otro programa, exit 6 con el original intacto: ver `docs save-as`). Después de
 exportar se verifica que el archivo exista y pese más de 0 bytes; si no, exit 4.
 
+Cuando `SaveCopyAs` falla, Solid Edge devuelve `0x80020009` (`DISP_E_EXCEPTION`) sin texto; el error
+real viene en `error.details.scode` (`E_FAIL`, `E_ABORT`, `E_POINTER`...: no dice la causa). Causas
+confirmadas en vivo (2026-11-25), todas a rutas nuevas:
+
+- **Documento sin geometría** (pieza o chapa sin ninguna operación, ensamble sin ocurrencias) a
+  `stl`, `x_t` o `igs` (en un ensamble vacío, `stl` e `igs`; su `x_t` sale): exit 6 `no_soportado`
+  con `details.causa: "documento_vacio"`. STEP sí se escribe vacío.
+- **Ruta absoluta de 260 caracteres o más** (`SaveCopyAs` y `SaveAs`; 259 se guarda): exit 2 antes de
+  tocar Solid Edge, con `details.largo` y `details.maximo`.
+- **Error sin explicación** (por ejemplo, `dxf` de un Draft en esta máquina da `E_FAIL` aun con
+  vistas, causa sin determinar): exit 4 con un mensaje que dice qué revisar y el `hresult` original.
+
+No son causas: documento nunca guardado, ruta con espacios o acentos, barra normal, extensión que
+no corresponde al tipo (`SaveCopyAs` no falla: con una extensión desconocida escribe el formato nativo; la
+CLI ya exige la extensión del formato) ni carpeta inexistente (Solid Edge devuelve OK sin escribir
+nada; la CLI la rechaza antes con exit 2).
+
 ```powershell
 se --json export .\*.par --format step --out C:\salida   # lote: Python expande el glob
 se --json export .\piezas --format stl --recursive
@@ -1069,7 +1090,7 @@ están en la sección de cada comando.
 | `features suppress` en operaciones sincrónicas | **imposible** por la API (exit 6, ver `features suppress`) |
 | `sheetmetal flat-dxf` sin desarrollo | exit 5 salvo `--create`; un `--create` fallido deja un `FlatPatternModel` vacío que la API no borra |
 | bridas y agujeros en chapa doblada | `sheetmetal tab` solo crea la base y no acepta una cara existente. Sin comando de brida: probado con `se run --allow-scripts` y `Flanges.AddSync` sobre una base creada en modo sincrónico. Después, en modo ordenado, `hole --plane front --direction reverse --through` perforó el tramo vertical. El DXF incluyó ambos agujeros y una línea de pliegue en `DOWN_CENTERLINES` |
-| `mass` sin densidad tras recalcular y guardar | el guardado no garantiza que la API devuelva propiedades físicas guardadas. En una pieza ordenada de prueba, `Model.GetPhysicalProperties` devolvió estado 2 y valores vacíos tras `mass --density 7850` y `docs save`, incluso después de reabrir la pieza. El volumen del cuerpo se pudo leer al reabrir |
+| `mass` sin densidad tras recalcular y guardar | **causa: la pieza no tiene material.** Sin material, `Model.GetPhysicalProperties` devuelve estado 2 y ceros tras `mass --density 7850` y `docs save` (también al reabrir); con un material aplicado (`MaterialTable.ApplyMaterialToDoc`) devuelve estado 1 sin guardar. `se` no tiene comando para asignar material: se hace en Solid Edge. La CLI lo explica (ver "Propiedades físicas") |
 | vistas sobre el rótulo | el layout reserva 30 mm abajo y el rótulo ISO mide 50,8 mm: con escalas grandes una vista puede pisarlo |
 | marca de agua de Community Edition | en el PDF, no se puede quitar (DXF y PNG no la traen) |
 
@@ -1125,8 +1146,8 @@ da exit 2. Sin flag ni variable, la CLI espera sin límite; el servidor MCP usa 
 
 - **Qué mide:** inactividad, no la duración total. El reloj se reinicia al empezar cada llamada
   COM, así que un comando largo hecho de muchas llamadas cortas (un lote de `export`) no vence. Una
-  sola llamada que tarde más que el plazo sí se corta (en esta máquina `docs new part` tarda más de
-  5 s): en ese caso subí el `--timeout`.
+  sola llamada que tarde más que el plazo sí se corta: en ese caso subí el `--timeout`. Ver
+  "Cuánto tarda crear un documento" más abajo.
 - **Qué pasa al vencer:** se pide la cancelación de la llamada en curso (`CoCancelCall`). Si
   vuelve dentro de 5 s, el comando termina con exit 7 y `details.cancelacion: "cancelada"`; el hilo
   COM y la conexión siguen sirviendo (en MCP, la llamada siguiente del mismo servidor responde). Si
@@ -1153,6 +1174,32 @@ exit 7 a los 6,8 s (cancelada) y a los 7,3 s (abandonada, sin gracia), sin queda
 archivo de destino queda intacto. Habilitar la cancelación no tiene costo medible (500 lecturas de
 `Application.Version`: cociente 0,9 a 1,3 según la corrida). `se com invoke` apaga `DisplayAlerts`,
 así que no abre ese diálogo.
+
+#### Cuánto tarda crear un documento
+
+`se docs new` es una sola llamada COM, `Documents.Add`, y el tiempo es de Solid Edge (crea el
+documento desde la plantilla): la CLI no hace trabajo extra que valga la pena sacar. Medido el
+2026-11-25 (Solid Edge 226.00.01.04, tres corridas por tipo, sin otros documentos abiertos y con 6
+abiertos: no cambia):
+
+| tipo | `Documents.Add` | `se docs new` de punta a punta |
+|---|---|---|
+| `part` | 1,6 a 1,9 s (2,0 s la primera vez) | 2,7 a 2,9 s |
+| `sheetmetal` | 1,4 a 1,5 s | 2,5 a 2,6 s |
+| `assembly` | 2,2 a 2,4 s | 3,5 a 3,8 s |
+| `draft` | 1,0 a 1,1 s | 2,1 a 2,3 s |
+
+De ese total, 0,75 s son el arranque de Python y `uv` (`se status` tarda lo mismo), y la CLI gasta
+menos de 0,3 s en describir el documento nuevo. Una corrida anterior vio más de 5 s para `part`; no
+se repitió, y lo esperable es que pase con Solid Edge recién abierto o cargado. **Recomendación:**
+para `docs new` un `--timeout` de 30 s como mínimo (el servidor MCP ya usa 120).
+Con `--timeout 5` funciona en esta máquina, pero con poco margen.
+
+**Documento huérfano:** `Documents.Add` no se puede cancelar a la mitad. Con `--timeout 1`,
+`se docs new part` salió con exit 7 (`cancelacion: "cancelada"`, `esperado_s: 1.8`): `CoCancelCall`
+recién volvió cuando Solid Edge terminó de crear el documento, y el documento quedó abierto. Un
+timeout en `docs new` no quiere decir que no se creó nada: revisá con `se docs list` y cerrá el
+sobrante con `se docs close <nombre> --discard`.
 
 ## Forma de `--json`
 

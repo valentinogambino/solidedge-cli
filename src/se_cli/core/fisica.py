@@ -5,10 +5,12 @@ Todo en SI en la API (kg, m, m², m³, kg/m³, kg·m²). Verificado en vivo (Sol
 
 - Pieza y chapa: sin densidad se leen las propiedades guardadas en el modelo con
   `Model.GetPhysicalProperties` (solo lectura; `Status` 1 = hay, 2 = no hay y todo viene en cero).
-  Un cálculo con densidad recién queda disponible para esa lectura después de guardar el
-  documento. Con densidad se recalcula con `Model.ComputePhysicalPropertiesWithSpecifiedDensity`,
-  que cambia el estado del documento. `GetUserPhysicalProperties` solo devuelve valores que el
-  usuario cargó a mano, así que no sirve para esto.
+  El estado depende del material: es 1 apenas el documento tiene uno asignado (sin guardar) y 2
+  mientras no lo tenga, aunque se haya calculado con densidad y guardado (verificado en vivo el
+  2026-11-25; `GetCurrentMaterialName` devuelve cadena vacía). Con densidad se recalcula con
+  `Model.ComputePhysicalPropertiesWithSpecifiedDensity`, que cambia el estado del documento.
+  `GetUserPhysicalProperties` solo devuelve valores que el usuario cargó a mano, así que no sirve
+  para esto.
 - Ensamble: no existe un cálculo con densidad (el documento no tiene
   `ComputePhysicalPropertiesWithSpecifiedDensity`); la masa sale de los materiales de las piezas
   con `PhysicalProperties.GetAssemblyPhysicalProperties`, tras `Update()` si está desactualizado.
@@ -208,6 +210,33 @@ def _convertir(si: dict[str, Any], elegidas: dict[str, str]) -> dict[str, Any]:
     return convertido
 
 
+def material_de(app: Any, doc: Any) -> str | None:
+    """Nombre del material del documento (`""` si no tiene), o None si no se pudo consultar."""
+    tabla = opcional(lambda: app.GetMaterialTable())
+    if tabla is None:
+        return None
+    nombre = opcional(lambda: tabla.GetCurrentMaterialName(doc))
+    return None if nombre is None else str(nombre).strip()
+
+
+def _sin_propiedades_guardadas(app: Any, doc: Any) -> ArgumentoInvalido:
+    """Error de `mass` sin densidad cuando Solid Edge informa estado 2 (nada guardado)."""
+    detalles: dict[str, Any] = {"estado_solid_edge": 2}
+    if app is not None and material_de(app, doc) == "":
+        detalles["causa"] = "sin_material"
+        return ArgumentoInvalido(
+            "La pieza no tiene material asignado: Solid Edge no guarda masa ni densidad sin "
+            "material (estado 2), y guardar el documento no lo cambia. Asignale un material en "
+            "Solid Edge o pasá --density <kg/m3> para calcular con una densidad explícita.",
+            details=detalles,
+        )
+    return ArgumentoInvalido(
+        "Solid Edge no tiene propiedades físicas calculadas para el documento (estado 2): pasá "
+        "--density <kg/m3> para calcularlas (modifica el estado del documento).",
+        details=detalles,
+    )
+
+
 def piezas_sin_material(app: Any, doc: Any) -> list[dict[str, Any]] | None:
     """Piezas del ensamble sin material, por archivo y con su cantidad de ocurrencias.
 
@@ -249,7 +278,8 @@ def propiedades(
     cálculo (`False`, solo lectura).
 
     Un ensamble con `app` suma `piezas_sin_material` (lista, o None si no se pudo consultar) y,
-    si hay, una `advertencia`: no cambia la masa ni el exit code.
+    si hay, una `advertencia`: no cambia la masa ni el exit code. Una pieza o chapa sin material
+    calculada con `densidad` suma también una `advertencia`.
     """
     tipo = exigir_tipo(doc, TIPOS_SOPORTADOS, "mass")
     actualizado = densidad is not None
@@ -267,11 +297,7 @@ def propiedades(
     else:
         lectura = _normalizar_lectura_de_pieza(_leer_pieza_en_com(_objeto_de_calculo(doc)))
         if lectura is None:
-            raise ArgumentoInvalido(
-                "El documento no tiene propiedades físicas guardadas: pasá --density <kg/m3> "
-                "para calcularlas (modifica el estado del documento; recién se pueden leer sin "
-                "densidad después de guardarlo)."
-            )
+            raise _sin_propiedades_guardadas(app, doc)
         resultado, densidad_leida = lectura
     si = _desempaquetar(resultado)
     if densidad is not None:
@@ -298,6 +324,13 @@ def propiedades(
         "actualizado": actualizado,
         "unidades": convertido["unidades"],
     }
+    if tipo != "assembly" and densidad is not None and app is not None:
+        if material_de(app, doc) == "":
+            data["advertencia"] = (
+                "La pieza no tiene material asignado: la masa se calculó con la densidad "
+                "indicada, pero Solid Edge no la guarda en el documento (sin material, `mass` sin "
+                "--density da estado 2). Asignale un material para que quede."
+            )
     if tipo == "assembly" and app is not None:
         sin_material = piezas_sin_material(app, doc)
         data["piezas_sin_material"] = sin_material
