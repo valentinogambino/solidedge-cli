@@ -252,7 +252,10 @@ def extrude(
     cut: bool = False,
     doc: Doc = None,
 ) -> Sobre:
-    """Extruí un perfil por una distancia como 10mm. Sin perfil, usá el último."""
+    """Extruí un perfil por una distancia como 10mm. Sin perfil, usá el último.
+
+    En una chapa sin base, creala antes con sheetmetal_tab.
+    """
     with _respuesta() as (sobre, completar):
         modelado.planificar_extrusion(distance, profile, direction, cut)
         completar(
@@ -260,6 +263,24 @@ def extrude(
                 lambda app: modelado.extruir(
                     acceso.documento(app, doc), distance, profile, direction, cut
                 ),
+                sin_alertas=True,
+            )
+        )
+    return sobre
+
+
+@mcp.tool()
+def sheetmetal_tab(
+    profile: str | None = None,
+    direction: Literal["normal", "reverse"] = "normal",
+    doc: Doc = None,
+) -> Sobre:
+    """Creá la base de una chapa (Tab) desde un perfil cerrado; el espesor es el del material."""
+    with _respuesta() as (sobre, completar):
+        modelado.planificar_tab(profile, direction)
+        completar(
+            _llamar(
+                lambda app: modelado.crear_tab(acceso.documento(app, doc), profile, direction),
                 sin_alertas=True,
             )
         )
