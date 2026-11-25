@@ -64,6 +64,8 @@ def test_flat_dxf_create_de_una_chapa_con_un_doblez(tmp_path):
     try:
         r, sobre = _correr("sheetmetal", "flat-dxf", "--doc", str(chapa))
         assert r.exit_code == 5  # sin --create no cambia nada
+        assert "--create" in sobre["error"]["details"]["hint"]
+        assert sobre["error"]["details"]["cambios_pendientes"] is False
 
         salida = tmp_path / "doblada.dxf"
         r, sobre = _correr("sheetmetal", "flat-dxf", "--doc", str(chapa), "--create")

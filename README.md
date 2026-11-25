@@ -789,8 +789,21 @@ se --json sheetmetal flat-dxf C:\p\Chapa.psm --out C:\salida\chapa.dxf
 Exporta el desarrollo (flat pattern) de una chapa. Toma un archivo `.psm` (si no está abierto se
 abre y se cierra sin guardar), `--doc <selector>` o el documento activo. Un documento que no es
 chapa da exit 2. Usa el desarrollo que la chapa **ya tiene** (`Models.SaveAsFlatDXFEx` con
-`UseFlatPatternModel=True`, sin elegir cara, arista ni vértice); si no tiene, sale con exit 5 y
-sugiere `--create`. Misma regla de `--overwrite` y de verificación de tamaño que `export`.
+`UseFlatPatternModel=True`, sin elegir cara, arista ni vértice). Misma regla de `--overwrite` y de
+verificación de tamaño que `export`.
+
+Si la chapa no tiene desarrollo sale con exit 5 sin tocar nada, y `error.details` explica qué hacer:
+
+```json
+{"code": "doc_no_encontrado", "message": "Chapa.psm no tiene desarrollo (flat pattern). ...", "details": {"documento": "Chapa.psm", "hint": "Repetí el comando con --create: crea el desarrollo por API (cara plana de mayor área), guarda la chapa con cualquier cambio pendiente, la cierra, la reabre y exporta. ...", "cambios_pendientes": true}}
+```
+
+`cambios_pendientes` es el `Dirty` de la chapa (`null` si no se pudo leer): con `true`, `--create`
+guardaría también esos cambios. El desarrollo **no se crea solo**: `FlatPatternModels.Add` marca el
+documento como modificado (verificado en vivo: `Dirty` pasa de `false` a `true` en una chapa recién
+abierta). Exportar un desarrollo al vuelo sin crearlo (`SaveAsFlatDXFEx(ruta, cara, arista, vértice,
+False)`) no ensucia el documento, pero tampoco sirve como reemplazo: sobre un cuerpo que no es de
+chapa (una `ExtrudedProtrusion` de 1 mm) devuelve igual el contorno de la cara, sin error.
 
 #### `--create`
 

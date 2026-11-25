@@ -205,6 +205,31 @@ def _crear_y_reabrir(app: Any, doc: Any, nombre: str, out: str | None, sobrescri
     return reabierto, cara
 
 
+PISTA_CREATE = (
+    "Repetí el comando con --create: crea el desarrollo por API (cara plana de mayor área), "
+    "guarda la chapa con cualquier cambio pendiente, la cierra, la reabre y exporta. Exige una "
+    "chapa guardada en disco y no de solo lectura. Si no querés que se guarde, creá el desarrollo "
+    "en Solid Edge (Herramientas > Desarrollo)."
+)
+
+
+def _sin_desarrollo(doc: Any, nombre: str) -> DocNoEncontrado:
+    """Exit 5 con la pista de `--create` y si la chapa tiene cambios que `--create` guardaría.
+
+    No se crea el desarrollo solo: `FlatPatternModels.Add` marca el documento como modificado
+    (verificado en vivo, 2026-11-25), así que hacerlo sin pedirlo cambiaría la chapa del usuario.
+    """
+    return DocNoEncontrado(
+        f"{nombre} no tiene desarrollo (flat pattern). Creálo en Solid Edge "
+        "(Herramientas > Desarrollo) o repetí el comando con --create.",
+        details={
+            "documento": nombre,
+            "hint": PISTA_CREATE,
+            "cambios_pendientes": opcional(lambda: bool(doc.Dirty)),
+        },
+    )
+
+
 def exportar_dxf(
     app: Any,
     archivo: str | None,
@@ -242,11 +267,7 @@ def exportar_dxf(
                 doc, cara = _crear_y_reabrir(app, doc, nombre, out, sobrescribir)
                 extras = {"desarrollo_creado": True, "documento_guardado": True, "cara": cara}
         if not _tiene_desarrollo(doc):
-            raise DocNoEncontrado(
-                f"{nombre} no tiene desarrollo (flat pattern). Creálo en Solid Edge "
-                "(Herramientas > Desarrollo) o repetí el comando con --create.",
-                details={"documento": nombre},
-            )
+            raise _sin_desarrollo(doc, nombre)
         origen = documentos.ruta_de(doc)
         salida = documentos.validar_destino(
             exportar.salida_individual(FORMATO_DESARROLLO, origen, out), sobrescribir
