@@ -809,14 +809,17 @@ chapa (una `ExtrudedProtrusion` de 1 mm) devuelve igual el contorno de la cara, 
 
 ```powershell
 se --json sheetmetal flat-dxf --create --out C:\salida\chapa.dxf
-# {"ok": true, "data": {"entrada": "C:\\p\\Chapa.psm", "documento": "Chapa.psm", "tipo": "sheetmetal", "formato": "dxf", "salida": "C:\\salida\\chapa.dxf", "ok": true, "bytes": 34405, "duracion_s": 3.8, "marca_de_agua": "ausente", "nota": "El DXF no trae la leyenda de Community Edition.", "desarrollo_creado": true, "documento_guardado": true, "cara": {"indice": 5, "area_si": 0.0048, "criterio": "cara plana de mayor area"}, "entidades_dxf": 5}, "error": null}
+# {"ok": true, "data": {"entrada": "C:\\p\\Chapa.psm", "documento": "Chapa.psm", "tipo": "sheetmetal", "formato": "dxf", "salida": "C:\\salida\\chapa.dxf", "ok": true, "bytes": 34405, "duracion_s": 3.8, "marca_de_agua": "ausente", "nota": "El DXF no trae la leyenda de Community Edition.", "desarrollo_creado": true, "documento_guardado": true, "cara": {"indice": 5, "area_si": 0.0048, "criterio": "cara plana de mayor area", "arista": 1, "desarrollo_reutilizado": false}, "entidades_dxf": 5}, "error": null}
 ```
 Si la chapa no tiene desarrollo, lo crea por API (`FlatPatternModels.Add(modelo)` y
 `FlatPatterns.Add(arista, cara, vértice)`), **guarda la chapa** (con cualquier cambio pendiente), la
 cierra, la reabre y recién ahí exporta (en una misma sesión el DXF puede salir sin entidades).
 
 - Cara: la **cara plana de mayor área** del primer modelo (`Face.Geometry.Type == igPlane`; en un
-  empate, la de menor índice). La arista es la primera de esa cara y el vértice su vértice inicial.
+  empate, la de menor índice). La arista es la **primera de esa cara que tiene vértice inicial**
+  (`cara.arista`) y el vértice, ese. Una arista cerrada (el círculo de un agujero hecho con
+  `se hole` o `se extrude --cut`) no tiene `StartVertex`, y pasarla a `FlatPatterns.Add` da
+  0x80020009: con un agujero en la cara grande, la arista 1 suele ser ese círculo.
 - Precondiciones (si no se cumplen, no se toca nada): la chapa tiene que estar guardada en disco
   (si no, exit 2) y no ser de solo lectura (si no, exit 6); el DXF de destino no puede existir sin
   `--overwrite` (exit 6).
@@ -827,10 +830,36 @@ cierra, la reabre y recién ahí exporta (en una misma sesión el DXF puede sali
 - Después de reabrir, la chapa queda abierta y activa si lo estaba (o se reactiva el documento que
   estaba activo); si el comando la abrió por ruta, se cierra al terminar.
 - `--dry-run` informa la acción (`"create": true`) sin tocar nada; `--readonly` da exit 6.
+- Si Solid Edge rechaza el desarrollo (`FlatPatterns.Add`), sale con **exit 6** (`no_soportado`,
+  con el `hresult`) **sin guardar** la chapa. `error.details` trae `causa_probable`, `base` (la
+  primera operación del modelo), `cara`, `arista`, `documento_guardado: false`,
+  `desarrollo_vacio_en_sesion` y un `hint`. Lo que se sabe que no se desarrolla: una chapa cuya
+  base es una operación de pieza (`ExtrudedProtrusion` o `RevolvedProtrusion`, lo que crea
+  `se extrude` como primera operación en un `.psm`), con cualquier arista y espesor.
+- **Limitación**: el intento fallido deja en la sesión un `FlatPatternModel` vacío
+  (`FlatPatterns.Count == 0`) que la API no deja borrar (`FlatPatternModel` no tiene `Delete`). No
+  cuenta como desarrollo (sin `--create` sigue siendo exit 5, no un DXF vacío), un nuevo `--create`
+  lo reutiliza en vez de agregar otro (`cara.desarrollo_reutilizado: true`) y se descarta cerrando
+  la chapa sin guardar (`se docs close <doc> --discard`). Si el comando abrió la chapa por ruta, la
+  cierra sin guardar y no queda nada (`desarrollo_vacio_en_sesion: false`).
 
 Verificado en vivo (2026-11-23): una chapa sincrónica de 100 x 50 x 1 mm con una brida de 30 mm
 (radio interno 1 mm) da un DXF de 100 x 79.09 mm con 5 entidades; área x espesor coincide con el
 volumen de la chapa (7.9356e-6 m3) dentro del 1 %.
+
+Verificado en vivo (2026-11-25), en un Tab ordenado de 100 x 50 x 1 mm (`AddBaseTab`) con un agujero
+pasante de 8 mm:
+
+| corte | arista 1 (el círculo) | primera arista con vértice |
+|---|---|---|
+| `ExtrudedCutouts.AddThroughAllMulti` (lo que usa `se hole`) | 0x80020009 | DXF con 4 `LINE` y 1 `CIRCLE` |
+| `NormalCutouts.AddThroughAllMulti` (método 0 y 205) y `AddFiniteMulti` (205 y 181) | 0x80020009 | DXF con 4 `LINE` y 1 `CIRCLE` |
+
+El problema era la arista, no el tipo de corte: el corte nativo de chapa (`NormalCutouts`) no cambia
+el resultado, así que `se hole` y `se extrude --cut` siguen usando `ExtrudedCutouts`. Un Tab con una
+`ExtrudedProtrusion` encima también se desarrolla; una base `ExtrudedProtrusion` (1 o 10 mm), no.
+Después del rechazo, `FlatPatterns.Add` sobre el mismo `FlatPatternModel` vacío con una arista válida
+funciona.
 
 ### Supuestos de la API (verificados en vivo)
 
@@ -887,7 +916,7 @@ Validados el 2026-11-23 (croquis con arcos y relaciones 2D, el 2026-11-24) contr
 | Redondeo | `Model.Rounds.Add(n, [aristas], [radios])` | verificado con una lista de Python de aristas (una operación para todas); `GetConstantRadii()` devuelve `(n, radios)`; el redondeo agrega aristas (12 pasan a 24 con 4 redondeadas) y renumera |
 | Chaflán | `Model.Chamfers.AddEqualSetback(n, [aristas], distancia)`, `AddSetbackAngle(cara, n, [aristas], distancia, angulo)` | verificado, también con varias aristas en una llamada; leídos con `ChamferSetbackValue1` y `ChamferSetbackAngle`; con distancia 4 mm y 30 grados sobre una arista de 50 mm quitó 230.94 mm3 (catetos de 4 y 4 tan 30 mm), con cualquiera de las dos caras de la arista como referencia; con una arista vieja (de antes de una operación) la llamada levanta una excepción |
 | Operación imposible | `Status == igFeatureFailed` tras `Rounds.Add` / `Chamfers.Add*` | verificado: radio de 500 mm sobre una caja **no da error**: crea `Round_n` fallida, deja el volumen igual y hace fallar las operaciones nuevas hasta borrarla; `Feature.Delete()` la quita y el modelo vuelve a funcionar |
-| Desarrollo de chapa | `FlatPatternModels.Add(modelo)`, `FlatPatterns.Add(arista, cara, vértice)`, `Face.Geometry.Type == igPlane` | verificado en chapa con un doblez; en la sesión sincrónica probada el DXF salió con entidades aun sin reabrir, pero se reabre igual |
+| Desarrollo de chapa | `FlatPatternModels.Add(modelo)`, `FlatPatterns.Add(arista, cara, vértice)`, `Face.Geometry.Type == igPlane` | verificado en chapa con un doblez; en la sesión sincrónica probada el DXF salió con entidades aun sin reabrir, pero se reabre igual; **corregido** (2026-11-25): la arista tiene que tener `StartVertex` (la de un agujero no tiene) y un `FlatPatternModel` vacío se reutiliza |
 | Brida de chapa (solo para armar la prueba) | `ModelingMode = seModelingModeSynchronous` antes del tab + `Flanges.AddSync` | verificado; en modo ordenado `Flanges.Add*` no resuelve |
 | `se com` | `getattr` / `setattr` sobre late binding | verificado con `Documents.Item(...)`, `Models.Item(1)...`, `DisplayAlerts` |
 | `se run` | `main(app, args)` en el hilo STA | verificado con un script de solo lectura |

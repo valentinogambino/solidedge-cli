@@ -137,3 +137,71 @@ def test_suppress_en_chapa_ordenada_funciona_y_en_sincronica_da_exit_6(tmp_path)
     finally:
         _cerrar(ordenada.name)
         _cerrar(sincronica.name)
+
+
+SCRIPT_BASE_DE_PIEZA = """
+def main(app, args):
+    doc = app.Documents.Add("SolidEdge.SheetMetalDocument")
+    perfil = doc.ProfileSets.Add().Profiles.Add(doc.RefPlanes.Item(1))
+    puntos = [(0, 0), (0.1, 0), (0.1, 0.05), (0, 0.05)]
+    for a, b in zip(puntos, puntos[1:] + puntos[:1]):
+        perfil.Lines2d.AddBy2Points(*a, *b)
+    perfil.End(1)
+    doc.Models.AddFiniteExtrudedProtrusion(1, (perfil,), 2, 0.001)
+    doc.SaveAs(args[0])
+    return {"modo": doc.ModelingMode}
+"""
+
+
+def _entidades_dxf(ruta) -> dict[str, int]:
+    lineas = [x.strip() for x in ruta.read_text(errors="ignore").splitlines()]
+    pares = list(zip(lineas[0::2], lineas[1::2], strict=False))
+    tipos: dict[str, int] = {}
+    en_entidades = False
+    for i, (codigo, valor) in enumerate(pares):
+        if codigo == "2" and i and pares[i - 1] == ("0", "SECTION"):
+            en_entidades = valor == "ENTITIES"
+        elif en_entidades and codigo == "0" and valor not in ("SECTION", "ENDSEC"):
+            tipos[valor] = tipos.get(valor, 0) + 1
+    return tipos
+
+
+@pytest.mark.live
+def test_flat_dxf_create_de_un_tab_con_agujero_de_se_hole(tmp_path):
+    chapa = tmp_path / "agujereada.psm"
+    (tmp_path / "tab.py").write_text(SCRIPT_TAB_ORDENADA, encoding="utf-8")
+    r, sobre = _correr("run", str(tmp_path / "tab.py"), "--allow-scripts", "--", str(chapa))
+    assert r.exit_code == 0, sobre
+    d = ["--doc", chapa.name]
+    try:
+        r, sobre = _correr("hole", "--at", "50mm,25mm", "--diameter", "8mm", "--through", *d)
+        assert r.exit_code == 0, sobre
+        r, sobre = _correr("sheetmetal", "flat-dxf", "--create", *d)
+        assert r.exit_code == 0, sobre
+        # La arista 1 de la cara grande es el círculo del agujero: se usa la siguiente.
+        assert sobre["data"]["cara"]["arista"] > 1
+        assert _entidades_dxf(tmp_path / "agujereada.dxf") == {"LINE": 4, "CIRCLE": 1}
+    finally:
+        _cerrar(chapa.name)
+
+
+@pytest.mark.live
+def test_flat_dxf_create_de_una_base_de_pieza_da_exit_6_clasificado(tmp_path):
+    chapa = tmp_path / "maciza.psm"
+    (tmp_path / "base.py").write_text(SCRIPT_BASE_DE_PIEZA, encoding="utf-8")
+    r, sobre = _correr("run", str(tmp_path / "base.py"), "--allow-scripts", "--", str(chapa))
+    assert r.exit_code == 0, sobre
+    d = ["--doc", chapa.name]
+    try:
+        for intento in (1, 2):  # el segundo reutiliza el desarrollo vacío y falla igual de claro
+            r, sobre = _correr("sheetmetal", "flat-dxf", "--create", *d)
+            assert r.exit_code == 6, (intento, sobre)
+            error = sobre["error"]
+            assert error["code"] == "no_soportado" and error["hresult"] == "0x80020009"
+            assert error["details"]["base"]["tipo"] == "ExtrudedProtrusion"
+            assert error["details"]["desarrollo_vacio_en_sesion"] is True
+        r, sobre = _correr("sheetmetal", "flat-dxf", *d)
+        assert r.exit_code == 5, sobre  # el desarrollo vacío no se exporta
+        assert not (tmp_path / "maciza.dxf").exists()
+    finally:
+        _cerrar(chapa.name)

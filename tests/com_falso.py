@@ -149,7 +149,7 @@ class DocumentoFalso(_ConFallos):
         self._sucio = False
         self._consolidar_fisicas()
         if self.coleccion is not None and getattr(self, "FlatPatternModels", None) is not None:
-            if self.FlatPatternModels.Count:
+            if tiene_patrones(self.FlatPatternModels):
                 self.coleccion.persistidos[self.FullName] = {
                     "dxf": not getattr(self, "dxf_siempre_vacio", False)
                 }
@@ -1688,9 +1688,18 @@ PLANO_GEOMETRIA = -1909484335  # igPlane
 CILINDRO_GEOMETRIA = 1234  # cualquier tipo que no sea plano
 
 
+def tiene_patrones(desarrollos: ColeccionFalsa) -> bool:
+    """Si algún `FlatPatternModel` tiene contenido (uno sin `FlatPatterns` cuenta, como antes)."""
+    return any(
+        getattr(getattr(d, "FlatPatterns", None), "Count", 1) != 0 for d in desarrollos.elementos
+    )
+
+
 class AristaFalsa:
-    def __init__(self) -> None:
-        self.StartVertex = object()
+    """Arista de una cara; una cerrada (el círculo de un agujero) no tiene `StartVertex`."""
+
+    def __init__(self, cerrada: bool = False) -> None:
+        self.StartVertex = None if cerrada else object()
 
 
 class GeometriaFalsa:
@@ -1699,10 +1708,12 @@ class GeometriaFalsa:
 
 
 class CaraFalsa:
-    def __init__(self, area: float, tipo: int = PLANO_GEOMETRIA) -> None:
+    def __init__(
+        self, area: float, tipo: int = PLANO_GEOMETRIA, aristas: list[AristaFalsa] | None = None
+    ) -> None:
         self.Area = area
         self.Geometry = GeometriaFalsa(tipo)
-        self.Edges = ColeccionFalsa([AristaFalsa(), AristaFalsa()])
+        self.Edges = ColeccionFalsa(aristas or [AristaFalsa(), AristaFalsa()])
 
 
 class CuerpoDeChapaFalso:
@@ -1714,19 +1725,33 @@ class CuerpoDeChapaFalso:
 
 
 class ModeloDeChapaCreableFalso:
-    def __init__(self, caras: list[CaraFalsa]) -> None:
+    def __init__(self, caras: list[CaraFalsa], features: list | None = None) -> None:
         self.Body = CuerpoDeChapaFalso(caras)
+        self.Features = ColeccionFalsa(features)
 
 
-class PatronesPlanosFalsos:
+class PatronesPlanosFalsos(ColeccionFalsa):
+    """`FlatPatternModel.FlatPatterns`.
+
+    Imita lo verificado en vivo: `Add` con una arista sin vértice (un círculo) o en una chapa que no
+    se puede desarrollar (`doc.no_desarrollable`) da 0x80020009 y el `FlatPatternModel` queda vacío.
+    """
+
     def __init__(self, doc: DocumentoFalso) -> None:
+        super().__init__([])
         self.doc = doc
 
     def Add(self, arista, cara, vertice):
         self.doc.registro.append(("FlatPatterns.Add", cara.Area))
         self.doc._tocar("FlatPatterns.Add")
+        if vertice is None or getattr(self.doc, "no_desarrollable", False):
+            raise ComErrorFalso(
+                0x80020009, "Exception occurred.", (0, None, None, None, 0, -2147024809)
+            )
         self.doc.desarrollo_de_esta_sesion = True
-        return object()
+        patron = object()
+        self.elementos.append(patron)
+        return patron
 
 
 class DesarrolloFalso:
