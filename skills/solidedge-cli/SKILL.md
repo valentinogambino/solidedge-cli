@@ -50,7 +50,7 @@ Copiá esta checklist y tachala:
 | 7 | ocupado tras reintentos, o `--timeout` vencido (`error.details.motivo = "timeout"`) | `ocupado` |
 
 4. Unidades: un valor sin unidad es SI (metros, radianes, kg). Escribí `mm`, `deg`, `g` explícitos (`10mm`, `45deg`); decimal con punto. Un negativo va después de `--` (`se vars set Largo -- -5mm`) o, en una opción, como `--offset=-0.002`. `--units mm,deg,g` solo cambia cómo se muestran los resultados.
-5. `<doc>` y `--doc` aceptan índice (1-based, el de `docs list`), nombre o ruta; sin él, el documento activo.
+5. `--doc` acepta índice (1-based, el de `docs list`), nombre o ruta; sin él, el documento activo. Excepción: `docs save`, `docs save-as` y `docs close` reciben el documento como argumento posicional (`se docs save prisma.dft`); con `--doc` dan exit 2. `docs list`, `docs active`, `docs open` y `docs new` no toman documento.
 6. Usá rutas absolutas en `save-as`, `export`, `asm add` y `draft from-part`.
 7. El modelado (`sketch`, `extrude`, `hole`, `round`...) anda solo en `part` y `sheetmetal` en modo ordenado, no sincrónico.
 

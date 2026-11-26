@@ -31,6 +31,7 @@ se --json --timeout 120 docs save-as C:\p\caja.par       # opcional
 
 - "Acero" a secas: `Steel` de la biblioteca `Materials` es el genérico (7833 kg/m3). Si el usuario pide uno específico (inoxidable, estructural, galvanizado, una norma), buscalo con `material list --library Materials` y, si hay duda, preguntale.
 - `material set` asigna el material y su densidad pero **no guarda**: el `save-as` del final lo guarda. Con material, `mass` sin `--density` da el valor real (acero de 7833 kg/m3: un prisma liso de 100 x 50 x 10 mm pesa 0.39165 kg; con el agujero y el redondeo de esta receta da algo menos). Usá `--density` solo si el usuario pide una densidad que no es la del material.
+- `--units` admite una sola unidad por magnitud: `--units mm,g,kg` da exit 2 (`--units trae dos unidades de masa: g y kg`). Sin unidad de masa, el SI ya da la masa en kg; para gramos, `--units mm,g`.
 - Para otro lado del plano, `extrude --direction reverse` o `symmetric`. Para cambiar una medida después, `vars list --units mm` y `vars set <nombre> 20mm`: el modelo se recalcula.
 - Verificá con `features list` (operaciones en orden y su estado) y comprobá la masa contra el volumen esperado cuando el usuario lo conozca.
 
@@ -47,6 +48,7 @@ se --json --timeout 120 export --format pdf             # junto al .dft
 - `from-part` crea y guarda `caja.dft` junto al modelo, y sin `--keep-open` lo cierra: en ese caso, `docs open C:\p\caja.dft` antes de acotar. `--pdf` genera el PDF en el acto, pero antes de las cotas; para un PDF acotado, exportalo al final (con `--overwrite` si ya existe, y con OK del usuario).
 - `draft dim --auto` solo recupera las cotas del modelo que se ven en esa vista: en una caja extruida, la frontal da el alto de la extrusión y la superior no suma las del croquis. Repetirlo da 0 cotas nuevas.
 - Ensamble: `draft from-part C:\p\conj.asm --keep-open`, luego `draft parts-list --view 1 --balloons` (lista de piezas y globos), y `docs save`.
+- Para verificar el plano, contá vistas y cotas: `se --json --timeout 120 com get ActiveDocument.ActiveSheet.DrawingViews.Count` y `... com get ActiveDocument.ActiveSheet.Dimensions.Count` (`data.valor`). En bash, una ruta con paréntesis o índice (`'ActiveDocument.ActiveSheet.DrawingViews.Item(1).Name'`) va entre comillas simples; sin ellas el shell falla por los paréntesis.
 - `--sheet` acepta A5 a A0 (A5 y A0 generan el fondo). Con escalas grandes una vista puede pisar el rótulo.
 - El PDF de Community Edition lleva marca de agua en el borde inferior izquierdo; no se puede quitar.
 
@@ -62,6 +64,7 @@ se --json --timeout 120 docs save-as C:\p\Chapa.psm
 se --json --timeout 120 sheetmetal flat-dxf --create --out C:\salida\chapa.dxf
 ```
 
+- `sketch rect` arranca en la esquina del origen, no centrado: el centro de una base de 120 x 80 mm queda en `60mm,40mm`, y un agujero centrado lleva `hole --at 60mm,40mm`. Con `--centered`, el `--at` del rectángulo es su centro.
 - La base de la chapa es `sheetmetal tab`, nunca `extrude`. Solo anda en `sheetmetal` ordenado y sin base previa; no acepta una cara existente. Para agregar material después, `extrude`.
 - `flat-dxf --create` crea el desarrollo si falta, **guarda la chapa, la cierra y la reabre** antes de exportar: avisale al usuario si hay cambios sin guardar que se van a guardar con ella. Exige la chapa guardada en disco (de ahí el `save-as`). Si el desarrollo ya existe, no toca nada y exporta.
 - Con un desarrollo hecho, `flat-dxf C:\p\Chapa.psm --out C:\salida\chapa.dxf` basta. Agregá `--overwrite` si el DXF ya existe y el usuario lo autoriza.
