@@ -985,8 +985,8 @@ Con `--sync` la base se crea en **modo sincrónico**: el comando pone
 con `se sketch`, en modo ordenado) y `data` suma `"modo": "sincronico"`. Es la base que
 necesita `se sheetmetal flange`. Si `AddBaseTab` falla se restituye el modo previo. Con la chapa
 ya sincrónica, `se edges list` funciona (lectura); `round`, `chamfer`, `sketch`, `extrude` y
-`hole` siguen pidiendo modo ordenado. PENDIENTE-VIVO: que el perfil hecho en modo ordenado
-sobreviva al cambio de modo antes del Tab (el script de `test_vivo_chapa.py` lo hacía al revés).
+`hole` siguen pidiendo modo ordenado. Verificado en vivo (2026-11-26): el perfil hecho con
+`se sketch` en modo ordenado sobrevive al cambio de modo y `tab --sync` lo usa sin problema.
 
 Recorrido verificado en vivo (2026-11-25, test `test_chapa_entera_por_la_cli_tab_agujero_y_desarrollo`):
 
@@ -1010,8 +1010,12 @@ Levanta una **brida** sobre una arista recta de la base de una chapa (`Flanges.A
 `--edge` es el índice de `se edges list` (la misma numeración que `round` y `chamfer`; los índices
 cambian con cada operación). `--length` (obligatoria, mayor que 0) lleva unidad (`30mm`; sin unidad,
 metros) y `--units` solo cambia cómo se muestra en `data`. `--angle` son grados, por defecto 90,
-dentro de (0, 180). `--direction` es `normal` (por defecto) o `reverse`. `--radius` es el radio
-interior del plegado; sin él se usa el del documento.
+dentro de (0, 180). `--direction` es `normal` (por defecto: la pared queda dentro de la huella de la
+base y el pliegue come chapa) o `reverse` (la pared queda fuera de la huella, que no se recorta).
+`--radius` es el radio interior del plegado; sin él se usa el de la variable `BendRadius` del
+documento, y `data` informa el radio usado (`radio_si`, `radio`) y su origen (`radio_origen`:
+`explicito` o `documento`). El sentido de levante lo fija la arista elegida: una arista de la cara
+superior levanta hacia arriba y una de la inferior, hacia abajo.
 
 Precondiciones, en este orden:
 
@@ -1023,6 +1027,7 @@ Precondiciones, en este orden:
 | la base es ordenada | exit 6, `no_soportado`, `details.causa = "base_ordenada"`; el mensaje indica `sheetmetal tab --sync` |
 | la arista no existe | exit 5 |
 | la arista no es recta (círculo, arco, otra) | exit 2 |
+| Solid Edge rechazó los parámetros (`--angle` cerca de 180, `--length` menor que radio más espesor) | exit 4, `details.causa = "brida_rechazada"`; el modelo no cambia |
 | el volumen no aumentó tras `AddSync` | se llama a `doc.Undo()` una vez y exit 4, `details.causa = "brida_sin_efecto"` (`deshecho` dice si el `Undo` anduvo) |
 
 Mide `Body.Volume` antes y después: `volumen_antes` y `volumen_despues` van en `data`, en m3.
@@ -1036,13 +1041,14 @@ los vacíos son `VT_EMPTY` y toman el valor por defecto de Solid Edge):
 | opción | argumento de `AddSync` |
 |---|---|
 | `--edge` | `pLocatedEdge`: la arista de `Body.Edges` |
-| `--length` | `FlangeLength`, en metros |
-| `--direction` | `ThicknessSide`: vacío con `normal`; `igLeft` con `reverse` |
-| `--radius` | `InsideRadius`, en metros; vacío si no se da |
+| `--length` | `FlangeLength`, en metros; se mide desde el plano de la cara que contiene la arista (`DimSide = igLeft`), así que con `normal` y 90° la altura total sobre la cara opuesta es largo + espesor |
+| `--direction` | `ThicknessSide`: `seFlangeMaterialInside` (4) con `normal`, `seFlangeMaterialOutside` (5) con `reverse`; `igLeft`/`igRight` dan E_FAIL |
+| `--radius` | `InsideRadius`, en metros; vacío si no se da (toma `BendRadius`) |
 | `--angle` | `BendAngle`, en radianes; vacío con 90 (el valor por defecto) |
-| (sin opción) | `DimSide`, `BRType`, `BRWidth`, `BRLength`, `CRType`, `NeutralFactor`, `BnParamType`: vacíos |
+| (fijo) | `DimSide = igLeft` |
+| (sin opción) | `BRType`, `BRWidth`, `BRLength`, `CRType`, `NeutralFactor`, `BnParamType`: vacíos |
 
-Recorrido pensado (la prueba en vivo `test_chapa_con_brida_por_la_cli` lo cubre; no se corrió todavía):
+Recorrido verificado en vivo (2026-11-26, test `test_chapa_con_brida_por_la_cli`):
 
 ```powershell
 se docs new sheetmetal
@@ -1054,10 +1060,22 @@ se docs save-as C:\p\Chapa.psm
 se sheetmetal flat-dxf --create
 ```
 
-PENDIENTE-VIVO: semántica de `--length` (desde dónde mide `FlangeLength`: cara exterior, interior o plano medio, y si incluye el radio).
-PENDIENTE-VIVO: qué lado del espesor toma `--direction reverse` (el valor de `ThicknessSide` que se pasa es `igLeft`, sin verificar) y hacia dónde se levanta `normal`.
-PENDIENTE-VIVO: radio efectivo cuando no se da `--radius` (si `InsideRadius` vacío toma el radio de plegado del documento o falla; el script de prueba pasaba 1 mm explícito).
-PENDIENTE-VIVO: `--angle` distinto de 90 (el MCP de referencia lo verificó con 45) y el aspecto del DXF desarrollado con la brida.
+Volúmenes medidos en vivo sobre una chapa de 100 x 50 x 1 mm, brida de 30 mm en la arista larga
+de la cara superior (en mm3; base = 5000):
+
+| caso | medido | cálculo a mano |
+|---|---|---|
+| `normal`, 90°, radio del documento (1 mm) | 7935,62 | 7935,62 |
+| `normal`, 90°, `--radius 2mm` | 7892,70 | 7892,70 |
+| `reverse`, 90°, radio 1 mm | 8035,62 | 8135,62 si la altura fuera la misma que en `normal`; la pared de `reverse` resulta 1 mm (un espesor) más corta |
+| `normal`, 45°, radio 1 mm | 7729,17 | sin cálculo a mano |
+| `reverse`, 60°, `--length 20mm`, `--radius 2mm` | 6830,78 | sin cálculo a mano |
+
+El cálculo a mano de `normal` a 90°: tramo plano de 48 mm (el pliegue consume 2 mm) + cuarto de
+corona de radios r y r + t + pared recta hasta 30 mm sobre la cara de la arista. Parámetros que
+Solid Edge rechaza (`--angle 179`, `--length 0.5mm --radius 5mm`) dan exit 4 con `brida_rechazada`
+y sin cambiar el modelo. Sin verificar: el aspecto del DXF desarrollado con la brida más allá de
+que tiene entidades.
 
 ### `se sheetmetal flat-dxf`
 
@@ -1204,7 +1222,7 @@ Validados el 2026-11-23 (croquis con arcos y relaciones 2D, el 2026-11-24) contr
 | Chaflán | `Model.Chamfers.AddEqualSetback(n, [aristas], distancia)`, `AddSetbackAngle(cara, n, [aristas], distancia, angulo)` | verificado, también con varias aristas en una llamada; leídos con `ChamferSetbackValue1` y `ChamferSetbackAngle`; con distancia 4 mm y 30 grados sobre una arista de 50 mm quitó 230.94 mm3 (catetos de 4 y 4 tan 30 mm), con cualquiera de las dos caras de la arista como referencia; con una arista vieja (de antes de una operación) la llamada levanta una excepción |
 | Operación imposible | `Status == igFeatureFailed` tras `Rounds.Add` / `Chamfers.Add*` | verificado: radio de 500 mm sobre una caja **no da error**: crea `Round_n` fallida, deja el volumen igual y hace fallar las operaciones nuevas hasta borrarla; `Feature.Delete()` la quita y el modelo vuelve a funcionar |
 | Desarrollo de chapa | `FlatPatternModels.Add(modelo)`, `FlatPatterns.Add(arista, cara, vértice)`, `Face.Geometry.Type == igPlane` | verificado en chapa con un doblez; en la sesión sincrónica probada el DXF salió con entidades aun sin reabrir, pero se reabre igual; **corregido** (2026-11-25): la arista tiene que tener `StartVertex` (la de un agujero no tiene) y un `FlatPatternModel` vacío se reutiliza |
-| Brida de chapa | `ModelingMode = seModelingModeSynchronous` antes del tab (`se sheetmetal tab --sync`) + `Model.Flanges.AddSync(arista, largo, lado, radio, 7 vacíos, ángulo)` (`se sheetmetal flange`) | verificado por script con `AddSync` y 12 argumentos (el MCP de referencia lo verificó con ángulo y radio); en modo ordenado `Flanges.Add*` no resuelve y cambiar el modo después de un Tab ordenado da E_FAIL; el comando `flange` está probado solo con COM falso: ver los `PENDIENTE-VIVO` de `se sheetmetal flange` |
+| Brida de chapa | `ModelingMode = seModelingModeSynchronous` antes del tab (`se sheetmetal tab --sync`) + `Model.Flanges.AddSync(arista, largo, lado, radio, 7 vacíos, ángulo)` (`se sheetmetal flange`) | verificado en vivo (2026-11-26) con `AddSync` y 12 argumentos, con ángulo, radio y ambos lados (ver los volúmenes medidos en `se sheetmetal flange`); en modo ordenado `Flanges.Add*` no resuelve y cambiar el modo después de un Tab ordenado da E_FAIL |
 | `se com` | `getattr` / `setattr` sobre late binding | verificado con `Documents.Item(...)`, `Models.Item(1)...`, `DisplayAlerts` |
 | `se run` | `main(app, args)` en el hilo STA | verificado con un script de solo lectura |
 | hresult de "ocupado" | `RPC_E_CALL_REJECTED` / `RPC_E_SERVERCALL_RETRYLATER` | no se pudo provocar (2026-11-25): Solid Edge 2026 no rechaza llamadas, las atiende o las encola (ver "Solid Edge ocupado") |

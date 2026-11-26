@@ -106,14 +106,19 @@ def flange(
     length: Annotated[
         str,
         typer.Option(
-            "--length", help="Longitud de la brida (ej. 30mm; sin unidad, metros). Mayor que 0."
+            "--length",
+            help="Altura desde la cara de la arista (ej. 30mm; sin unidad, metros). Mayor que 0.",
         ),
     ],
     angle: Annotated[
         float, typer.Option("--angle", help="Ángulo de la brida en grados, entre 0 y 180.")
     ] = brida.ANGULO_POR_DEFECTO,
     direction: Annotated[
-        str, typer.Option("--direction", help="normal o reverse (lado hacia el que se levanta).")
+        str,
+        typer.Option(
+            "--direction",
+            help="normal (pared dentro de la huella de la base) o reverse (pared fuera de ella).",
+        ),
     ] = "normal",
     radius: Annotated[
         str | None,
