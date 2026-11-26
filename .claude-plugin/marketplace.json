@@ -1,0 +1,14 @@
+{
+  "name": "solidedge-cli",
+  "description": "Skill de Claude Code para operar Solid Edge con la CLI se.",
+  "owner": {
+    "name": "Valentino Gambino"
+  },
+  "plugins": [
+    {
+      "name": "solidedge-cli",
+      "source": "./",
+      "description": "Skill para operar Solid Edge desde la terminal con la CLI se: piezas, ensambles, planos, chapa y exportación."
+    }
+  ]
+}

@@ -34,9 +34,6 @@ se --json export --format step
 
 MIT, ver `LICENSE`.
 
-Para verificar F0, abrí Solid Edge y corré `uv run python scripts/smoke.py`.
-Los archivos de la prueba quedan en `out/smoke/`.
-
 ## Opciones globales
 
 Van antes del comando: `se --json docs list`.
@@ -298,7 +295,7 @@ Todos modifican, aceptan `--doc` y siguen las reglas globales: `--readonly` los 
 
 - `<occ>`: índice 1-based de la ocurrencia de primer nivel (el `indice` de `asm tree`) o su nombre,
   sin distinguir mayúsculas. Si no existe, exit 5.
-- `add` inserta una pieza, chapa o ensamble (`.par`, `.psm`, `.asm`, `.pwd`). Sin `--at` ni `--rot`
+- `add` inserta una pieza, chapa, ensamble o weldment (`.par`, `.psm`, `.asm`, `.pwd`). Sin `--at` ni `--rot`
   va al origen. Un archivo que no existe da exit 5; una extensión no insertable, o el propio
   ensamble, exit 2. Admite el mismo archivo varias veces (cada una es una ocurrencia).
 - `--at`, `--by` y `--rot` toman tres valores `X,Y,Z`. Longitudes con unidad (`10mm`) y ángulos
@@ -1250,10 +1247,43 @@ no se serializan (solo datos planos).
 
 `uv run pytest` usa un COM falso y no necesita Solid Edge. Las pruebas con la marca `live`
 necesitan Solid Edge abierto y no corren por defecto: `uv run pytest -m live`.
-Hay 54 pruebas `live`; 5 de ellas (`tests/test_vivo_timeout.py`) abren un diálogo modal en Solid Edge
+Hay 55 pruebas `live`; 5 de ellas (`tests/test_vivo_timeout.py`) abren un diálogo modal en Solid Edge
 y no corren con `uv run pytest -m live` salvo que se defina `SE_LIVE_MODAL=1`. Avisá antes de
-correrlas: el diálogo queda visible unos segundos. Las pruebas unitarias son 1165.
+correrlas: el diálogo queda visible unos segundos. Las pruebas unitarias son 1233.
 `src/se_cli/core/constants.py` se regenera con `uv run python scripts/gen_constants.py`.
+Para una prueba rápida de COM contra una instancia abierta, abrí Solid Edge y corré
+`uv run python scripts/smoke.py`; los archivos quedan en `out/smoke/`.
+
+## Skill para Claude Code
+
+El repo es también un plugin de Claude Code: la skill `solidedge-cli` le enseña a Claude a operar
+Solid Edge con `se` (seguridad antes de operar, comandos, recetas, errores conocidos). Necesita `se`
+en el PATH (`uv tool install .`); la skill solo da instrucciones, no instala la CLI.
+
+Instalación como plugin, desde una sesión de Claude Code:
+
+```text
+/plugin marketplace add valentinogambino/solidedge-cli
+/plugin install solidedge-cli@solidedge-cli
+```
+
+o desde la shell:
+
+```powershell
+claude plugin marketplace add valentinogambino/solidedge-cli
+claude plugin install solidedge-cli@solidedge-cli
+```
+
+El plugin no fija `version`, así que Claude Code lo identifica por el commit del repo.
+
+Alternativa manual: copiá la carpeta `skills/solidedge-cli/` a `~/.claude/skills/` (para todos tus
+proyectos) o a `.claude/skills/` de un proyecto. Hace falta el nombre de carpeta `solidedge-cli`.
+
+La skill se invoca sola cuando pedís algo de Solid Edge ("exportá a STEP", "sacá la masa", "hacé el
+plano con vistas y cotas"), o a mano con `/solidedge-cli:solidedge-cli` (instalada como plugin) o
+`/solidedge-cli` (copiada a mano). Contiene `SKILL.md` (reglas de seguridad y flujo de trabajo) y
+`reference/` (`comandos.md`, `recetas.md`, `errores.md` y `sketch-profile.md`), que Claude lee solo
+cuando hace falta. Esta carpeta se genera desde la fuente de la skill; no se edita a mano.
 
 ## Extensión para Claude Desktop (.mcpb)
 
@@ -1282,8 +1312,10 @@ La opción **Timeout (s)** (por defecto 120) fija cuánto espera cada herramient
 extraído y el Python 3.11 de sistema (`python -I -S server/main.py`), una sesión stdio real respondió
 `initialize` (protocolo 2025-06-18), `tools/list` y `status` con Solid Edge cerrado y abierto, y
 `docs_list`, `features_list`, `mass` y `export` STEP dieron lo mismo que la CLI contra Solid Edge
-226.00.01.04. La instalación en Claude Desktop no se probó (necesita su interfaz) y el paquete no
-está firmado.
+226.00.01.04. Claude Desktop cargó el servidor el 2026-11-25 configurado a mano, con una entrada
+`mcpServers` en `claude_desktop_config.json`, y su log registró la conexión a `solidedge-cli` con 16
+herramientas. Lo que sigue sin probar es instalar el `.mcpb` desde la interfaz (**Instalar
+extensión…**), y el paquete no está firmado.
 
 Abrí Solid Edge antes de usar las herramientas. Probá `status` para comprobar
 qué documento está activo. Usá rutas absolutas cuando le pidas a Claude que
