@@ -54,6 +54,7 @@ def test_registro_de_herramientas():
         "sketch_profile",
         "extrude",
         "sheetmetal_tab",
+        "sheetmetal_flange",
         "asm_add",
         "asm_tree",
     }
@@ -233,6 +234,45 @@ def test_sheetmetal_tab_rechaza_symmetric_por_esquema(monkeypatch):
     monkeypatch.setattr(servidor, "Sesion", inesperada)
     with pytest.raises(ToolError, match="Argumentos inválidos"):
         asyncio.run(servidor.mcp.call_tool("sheetmetal_tab", {"direction": "symmetric"}))
+
+
+def test_sheetmetal_tab_sync_y_flange(app_falsa):
+    doc = con_modelado(app_falsa.agregar_documento("Chapa.psm", tipo=4))
+    datos(servidor.sketch_profile(_rectangulo()))
+
+    tab = datos(servidor.sheetmetal_tab(sync=True))
+    assert tab["modo"] == "sincronico" and doc.modo_al_crear_base == 1
+
+    brida = datos(servidor.sheetmetal_flange(edge=9, length="30mm", angle=45, units="mm"))
+    assert brida["operacion"] == "brida" and brida["longitud"] == 30.0 and brida["angulo"] == 45
+    assert brida["volumen_despues"] > brida["volumen_antes"]
+    assert app_falsa.historial_alertas[-2:] == [False, True]
+
+
+def test_sheetmetal_flange_errores(app_falsa):
+    doc = con_modelado(app_falsa.agregar_documento("Chapa.psm", tipo=4))
+    datos(servidor.sketch_profile(_rectangulo()))
+    datos(servidor.sheetmetal_tab())  # base ordenada
+    error(servidor.sheetmetal_flange(edge=9, length="30mm"), "no_soportado")
+    error(servidor.sheetmetal_flange(edge=9, length="0mm"), "argumento_invalido")
+    error(servidor.sheetmetal_flange(edge=9, length="30mm", units="furlong"), "argumento_invalido")
+    assert doc.Models.Item(1).Flanges.Count == 0
+
+
+def test_sheetmetal_flange_rechaza_por_esquema(monkeypatch):
+    def inesperada(*, plazo):
+        pytest.fail("Los argumentos inválidos no deben llegar a COM")
+
+    monkeypatch.setattr(servidor, "Sesion", inesperada)
+    for argumentos in (
+        {"edge": 0, "length": "30mm"},
+        {"edge": 1, "length": "30mm", "angle": 180},
+        {"edge": 1, "length": "30mm", "direction": "symmetric"},
+        {"edge": 1, "length": "30mm", "extra": True},
+        {"length": "30mm"},
+    ):
+        with pytest.raises(ToolError, match="Argumentos inválidos|validation"):
+            asyncio.run(servidor.mcp.call_tool("sheetmetal_flange", argumentos))
 
 
 def test_timeout_mcp_y_status_siguiente(app_falsa, sta, monkeypatch, tmp_path):

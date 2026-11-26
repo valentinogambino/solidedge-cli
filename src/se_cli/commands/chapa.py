@@ -1,4 +1,4 @@
-"""Comandos de chapa metálica: `se sheetmetal flat-dxf` y `se sheetmetal tab`."""
+"""Comandos de chapa metálica: `se sheetmetal flat-dxf`, `tab` y `flange`."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from typing import Annotated
 
 import typer
 
-from se_cli.commands._comun import DocOpcion, sin_dialogos
-from se_cli.core import acceso, chapa, modelado
+from se_cli.commands._comun import DocOpcion, UnitsOpcion, sin_dialogos, validar_units
+from se_cli.core import acceso, brida, chapa, modelado, unidades
 from se_cli.ejecucion import ejecutar
 
 app = typer.Typer(help="Chapa metálica.", no_args_is_help=True)
@@ -68,19 +68,82 @@ def tab(
     direction: Annotated[
         str, typer.Option("--direction", help="normal o reverse (lado del plano del perfil).")
     ] = "normal",
+    sync: Annotated[
+        bool,
+        typer.Option(
+            "--sync",
+            help="Creá la base en modo sincrónico (necesario para `sheetmetal flange`). Sin esto, "
+            "modo ordenado.",
+        ),
+    ] = False,
     doc: DocOpcion = None,
 ) -> None:
     """Creá la base de una chapa (Tab) desde un perfil cerrado, con el espesor del material.
 
-    Solo en una chapa en modo ordenado y sin modelo base (si ya tiene, exit 2). Es la base que
-    `sheetmetal flat-dxf --create` puede desarrollar; `se extrude` no crea la base de una chapa.
+    Solo en una chapa sin modelo base (si ya tiene, exit 2) y en modo ordenado, o con --sync, que
+    pone el documento en modo sincrónico antes del Tab (la brida solo resuelve sobre esa base).
+    Es la base que `sheetmetal flat-dxf --create` puede desarrollar; `se extrude` no crea la base
+    de una chapa.
     """
     ejecutar(
         ctx,
         lambda sesion: sin_dialogos(
             sesion,
-            lambda a: modelado.crear_tab(acceso.documento(a, doc), profile, direction),
+            lambda a: modelado.crear_tab(acceso.documento(a, doc), profile, direction, sync),
         ),
         modifica=True,
-        plan=lambda: modelado.planificar_tab(profile, direction),
+        plan=lambda: modelado.planificar_tab(profile, direction, sync),
     )
+
+
+@app.command("flange")
+def flange(
+    ctx: typer.Context,
+    edge: Annotated[
+        int,
+        typer.Option("--edge", help="Arista recta, con el índice de `se edges list` (desde 1)."),
+    ],
+    length: Annotated[
+        str,
+        typer.Option(
+            "--length", help="Longitud de la brida (ej. 30mm; sin unidad, metros). Mayor que 0."
+        ),
+    ],
+    angle: Annotated[
+        float, typer.Option("--angle", help="Ángulo de la brida en grados, entre 0 y 180.")
+    ] = brida.ANGULO_POR_DEFECTO,
+    direction: Annotated[
+        str, typer.Option("--direction", help="normal o reverse (lado hacia el que se levanta).")
+    ] = "normal",
+    radius: Annotated[
+        str | None,
+        typer.Option(
+            "--radius",
+            help="Radio interior del plegado (ej. 1mm). Por defecto, el del documento.",
+        ),
+    ] = None,
+    units: UnitsOpcion = None,
+    doc: DocOpcion = None,
+) -> None:
+    """Creá una brida sobre una arista recta de una chapa (Flanges.AddSync).
+
+    Exige una chapa con base creada en modo sincrónico (`se sheetmetal tab --sync`): con la base
+    ordenada da exit 6 (`causa: base_ordenada`). Mide el volumen antes y después; si no aumentó,
+    deshace la operación y da exit 4 (`causa: brida_sin_efecto`). Arista no recta o argumento
+    fuera de rango: exit 2; arista inexistente: exit 5.
+    """
+
+    def plan() -> dict:
+        validar_units(units)
+        return brida.planificar_brida(edge, length, angle, direction, radius)
+
+    def correr(sesion):
+        elegidas = unidades.parsear_unidades(units)
+        return sin_dialogos(
+            sesion,
+            lambda a: brida.crear_brida(
+                acceso.documento(a, doc), edge, length, angle, direction, radius, elegidas
+            ),
+        )
+
+    ejecutar(ctx, correr, modifica=True, plan=plan)
