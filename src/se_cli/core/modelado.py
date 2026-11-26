@@ -22,6 +22,7 @@ radianes). Verificado en vivo (Solid Edge 2026 226.00.01.04, 2026-11-23):
 
 from __future__ import annotations
 
+import contextlib
 import math
 import re
 from typing import Any
@@ -157,11 +158,14 @@ def _nombre_de_plano(indice: int) -> str:
 # --- Acceso COM -------------------------------------------------------------------------------
 
 
-def exigir_modelable(doc: Any, comando: str) -> str:
-    """Pieza o chapa en modo ordenado; si no, exit 2 con la explicación."""
+def exigir_modelable(doc: Any, comando: str, *, admite_sincronico: bool = False) -> str:
+    """Pieza o chapa en modo ordenado; si no, exit 2 con la explicación.
+
+    Con `admite_sincronico` (solo para leer, sin modificar) también acepta el modo sincrónico.
+    """
     tipo = exigir_tipo(doc, TIPOS_MODELABLES, comando)
     modo = opcional(lambda: int(doc.ModelingMode))
-    if modo == constante("seModelingModeSynchronous"):
+    if modo == constante("seModelingModeSynchronous") and not admite_sincronico:
         raise ArgumentoInvalido(
             f"`{comando}` solo funciona con el documento en modo ordenado, y este está en modo "
             "sincrónico. Cambiá a modo ordenado en Solid Edge.",
@@ -590,26 +594,41 @@ def _exigir_base_de_chapa(doc: Any, tipo: str, comando: str) -> None:
 DIRECCIONES_DE_TAB = ("normal", "reverse")
 
 
-def planificar_tab(perfil: str | None, direccion: str) -> dict[str, Any]:
+def planificar_tab(perfil: str | None, direccion: str, sync: bool = False) -> dict[str, Any]:
     direccion = validar_direccion(direccion)
     if direccion not in DIRECCIONES_DE_TAB:
         raise ArgumentoInvalido(
             f"Un Tab no admite --direction {direccion}: usá normal o reverse.",
             details={"validas": list(DIRECCIONES_DE_TAB)},
         )
-    return {"accion": "sheetmetal.tab", "perfil": validar_perfil(perfil), "direccion": direccion}
+    plan: dict[str, Any] = {
+        "accion": "sheetmetal.tab",
+        "perfil": validar_perfil(perfil),
+        "direccion": direccion,
+    }
+    if sync:
+        plan["sync"] = True
+    return plan
 
 
-def crear_tab(doc: Any, perfil: str | None, direccion: str) -> dict[str, Any]:
+def _poner_modo(doc: Any, modo: int) -> None:
+    leer(lambda: setattr(doc, "ModelingMode", modo))
+
+
+def crear_tab(doc: Any, perfil: str | None, direccion: str, sync: bool = False) -> dict[str, Any]:
     """Base de una chapa: `Models.AddBaseTab(perfil, lado)` con el espesor del material.
 
     Verificado en vivo (2026-11-25), rectángulo de 100 x 50 mm en `top` hecho con `se sketch rect`:
     `igRight` (`normal`) da el Tab de z = 0 a +1 mm y `igLeft` (`reverse`), de -1 mm a 0; volumen
     5e-6 m3 con el espesor por defecto (1 mm). Solo crea la base: con un modelo ya hecho, exit 2.
+
+    Con `sync`, pone `ModelingMode = seModelingModeSynchronous` antes de crear el Tab: es la única
+    base sobre la que `Flanges.AddSync` resuelve (`se sheetmetal flange`); cambiar el modo después
+    de un Tab ordenado da E_FAIL. Si el Tab falla, se restituye el modo previo.
     """
-    datos = planificar_tab(perfil, direccion)
+    datos = planificar_tab(perfil, direccion, sync)
     exigir_tipo(doc, ("sheetmetal",), "sheetmetal tab")
-    exigir_modelable(doc, "sheetmetal tab")
+    exigir_modelable(doc, "sheetmetal tab", admite_sincronico=sync)
     if _modelo(doc) is not None:
         raise ArgumentoInvalido(
             "La chapa ya tiene un modelo base: `se sheetmetal tab` solo crea la base. Para "
@@ -618,12 +637,21 @@ def crear_tab(doc: Any, perfil: str | None, direccion: str) -> dict[str, Any]:
         )
     indice, objeto = resolver_perfil(doc, datos["perfil"])
     modelos = leer(lambda: doc.Models)
-    leer(lambda: modelos.AddBaseTab(objeto, _lado(datos["direccion"])))
+    modo_previo = opcional(lambda: int(doc.ModelingMode))
+    if sync:
+        _poner_modo(doc, constante("seModelingModeSynchronous"))
+    try:
+        leer(lambda: modelos.AddBaseTab(objeto, _lado(datos["direccion"])))
+    except Exception:
+        if sync and modo_previo is not None:
+            with contextlib.suppress(Exception):
+                _poner_modo(doc, modo_previo)
+        raise
     modelo = _modelo(doc)
     if modelo is None:
         raise ErrorCom("Solid Edge no creó el Tab (el documento sigue sin modelo).")
     tabs = opcional(lambda: modelo.Tabs)
-    return {
+    resultado: dict[str, Any] = {
         "operacion": "tab",
         "nombre": None if tabs is None else _ultimo_nombre(tabs),
         "direccion": datos["direccion"],
@@ -631,6 +659,9 @@ def crear_tab(doc: Any, perfil: str | None, direccion: str) -> dict[str, Any]:
         "modelo_base": True,
         "volumen_si": _volumen(doc),
     }
+    if sync:
+        resultado["modo"] = "sincronico"
+    return resultado
 
 
 # --- Revolución -------------------------------------------------------------------------------

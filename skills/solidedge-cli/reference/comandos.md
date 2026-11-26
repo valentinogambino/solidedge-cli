@@ -131,9 +131,10 @@ Solo `assembly` (otro tipo, exit 2). `<occ>` es el `indice` de `asm tree` o el n
 
 ## Chapa
 
-- `se sheetmetal tab [--profile N] [--direction normal|reverse] [--doc]`: crea la base desde un perfil cerrado (por defecto, el último); el espesor es el del material. Solo `sheetmetal` ordenado y sin base (si no, exit 2; sin perfiles, exit 5). No acepta una cara existente.
+- `se sheetmetal tab [--profile N] [--direction normal|reverse] [--sync] [--doc]`: crea la base desde un perfil cerrado (por defecto, el último); el espesor es el del material. Solo `sheetmetal` sin base (si no, exit 2; sin perfiles, exit 5). No acepta una cara existente. Con `--sync` la base queda en modo sincrónico (`data.modo = "sincronico"`), que es el que necesita `flange`; después, `edges list` anda pero `sketch`, `extrude`, `hole`, `round` y `chamfer` piden modo ordenado.
+- `se sheetmetal flange --edge N --length L [--angle 90] [--direction normal|reverse] [--radius R] [--units] [--doc]`: levanta una brida sobre una arista recta (índice de `edges list`). Solo sobre base sincrónica: con base ordenada, exit 6 `causa: base_ordenada` (crear la base con `tab --sync`). `--length` es la altura desde la cara que contiene la arista. `normal` deja la pared dentro de la huella de la base; `reverse`, fuera. Sin `--radius` usa `BendRadius` del documento (`data.radio_origen` = `documento` o `explicito`). El sentido de levante lo fija la arista: una de la cara superior levanta hacia arriba. Parámetros que Solid Edge rechaza: exit 4 `causa: brida_rechazada`; arista inexistente: exit 5; arista no recta: exit 2.
 - `se sheetmetal flat-dxf [<archivo.psm>] [--out <.dxf|carpeta>] [--overwrite] [--create] [--doc]`: exporta el desarrollo. Sin desarrollo, exit 5 salvo `--create`, que lo crea, **guarda la chapa**, la cierra, la reabre y exporta (exige chapa guardada y no de solo lectura). Si Solid Edge no puede desarrollarla, exit 6 sin guardar.
-- No hay comando de brida: se hace con `se run --allow-scripts` y `Flanges.AddSync` (con confirmación del usuario); los agujeros en la cara doblada se hacen después, en modo ordenado, con `hole`.
+- Los agujeros en la cara doblada no se pueden hacer con la base sincrónica: `hole` pide modo ordenado.
 
 ## Escape a COM
 
@@ -145,7 +146,7 @@ Con confirmación del usuario, salvo `com get`.
 
 ## Servidor MCP (`se-mcp`)
 
-16 tools sobre las mismas funciones que la CLI, con el mismo `{ok, data, error}`. Cada tool valida sus argumentos contra un esquema (claves de más o tipos erróneos se rechazan antes de tocar Solid Edge). Todas aceptan `timeout` (segundos, `0 < t <= 3600`); sin él rige `SE_TIMEOUT` del servidor o, si no, 120 s. Al vencer devuelve `ocupado` y el servidor sigue vivo.
+17 tools sobre las mismas funciones que la CLI, con el mismo `{ok, data, error}`. Cada tool valida sus argumentos contra un esquema (claves de más o tipos erróneos se rechazan antes de tocar Solid Edge). Todas aceptan `timeout` (segundos, `0 < t <= 3600`); sin él rige `SE_TIMEOUT` del servidor o, si no, 120 s. Al vencer devuelve `ocupado` y el servidor sigue vivo.
 
 | tool | equivale a |
 |---|---|
@@ -159,6 +160,7 @@ Con confirmación del usuario, salvo `com get`.
 | `sketch_profile` | `se sketch profile` |
 | `extrude` | `se extrude` |
 | `sheetmetal_tab` | `se sheetmetal tab` |
+| `sheetmetal_flange` | `se sheetmetal flange` |
 | `asm_add`, `asm_tree` | `se asm add`, `se asm tree` |
 
 No están `com`, `run` ni `quit`. Lo que no tiene tool (`revolve`, `hole`, `round`, `chamfer`, `draft`, `props`, `asm relate`, `sheetmetal flat-dxf`...) se hace por la CLI.

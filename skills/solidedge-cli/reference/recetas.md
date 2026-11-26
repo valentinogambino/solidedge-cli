@@ -65,8 +65,23 @@ se --json --timeout 120 sheetmetal flat-dxf --create --out C:\salida\chapa.dxf
 - La base de la chapa es `sheetmetal tab`, nunca `extrude`. Solo anda en `sheetmetal` ordenado y sin base previa; no acepta una cara existente. Para agregar material después, `extrude`.
 - `flat-dxf --create` crea el desarrollo si falta, **guarda la chapa, la cierra y la reabre** antes de exportar: avisale al usuario si hay cambios sin guardar que se van a guardar con ella. Exige la chapa guardada en disco (de ahí el `save-as`). Si el desarrollo ya existe, no toca nada y exporta.
 - Con un desarrollo hecho, `flat-dxf C:\p\Chapa.psm --out C:\salida\chapa.dxf` basta. Agregá `--overwrite` si el DXF ya existe y el usuario lo autoriza.
-- Bridas: no hay comando. Con confirmación del usuario, `se run <script.py> --allow-scripts` con `Flanges.AddSync` sobre una base hecha en modo sincrónico; los agujeros en la cara doblada se hacen después, en modo ordenado, con `hole`.
+- Bridas: receta siguiente. Los agujeros se hacen antes de pasar a base sincrónica, o no se hacen: `hole` pide modo ordenado.
 - El DXF no lleva marca de agua.
+
+## Chapa con brida
+
+```powershell
+se --json --timeout 120 docs new sheetmetal
+se --json --timeout 120 sketch rect --width 100mm --height 50mm   # o `sketch profile` para otro contorno
+se --json --timeout 120 sheetmetal tab --sync            # base sincrónica (la brida lo exige)
+se --json --timeout 120 edges list                       # elegir el índice de la arista recta
+se --json --timeout 120 sheetmetal flange --edge 9 --length 30mm
+se --json --timeout 120 docs save-as C:\p\Chapa.psm
+se --json --timeout 120 sheetmetal flat-dxf --create --out C:\salida\chapa.dxf
+```
+
+- Con `--direction normal` la pared queda dentro de la huella de la base; con `reverse`, fuera. Sin `--radius` rige el radio de plegado del documento.
+- Una base creada con `tab` ordenado da exit 6 `base_ordenada`: rehacer la chapa con `tab --sync`.
 
 ## Ensamble con relaciones
 

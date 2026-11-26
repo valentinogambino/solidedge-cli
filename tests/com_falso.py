@@ -242,6 +242,11 @@ class DocumentoFalso(_ConFallos):
         pila = getattr(self, "deshacer", [])
         if pila:
             pila.pop()()
+        operacion = getattr(self, "ultima_a_deshacer", None)
+        if operacion is not None:
+            operacion.coleccion.elementos.remove(operacion)
+            operacion.coleccion.modelo.Features.elementos.remove(operacion)
+            self.ultima_a_deshacer = None
 
     def Close(self, guardar: bool = False) -> None:
         self.registro.append(("Close", self.Name, guardar))
@@ -1849,6 +1854,41 @@ class RedondeosFalsos(OperacionesFalsas):
         return self._crear_de_aristas(-1e-9 * cantidad, distancia=distancia, angulo=angulo)
 
 
+def _sin_vacio(valor: Any) -> Any:
+    """`None` si el argumento es un VARIANT vacío (toma el valor por defecto de Solid Edge)."""
+    return getattr(valor, "value", valor) if type(valor).__name__ == "VARIANT" else valor
+
+
+class BridasFalsas(OperacionesFalsas):
+    """`Model.Flanges`: solo `AddSync` resuelve, y solo en un documento sincrónico.
+
+    Imita lo verificado en vivo: en modo ordenado da 0x80004021; con `doc.brida_sin_efecto` crea la
+    operación pero el volumen no cambia (hay que deshacer con `doc.Undo()`).
+    """
+
+    def AddSync(self, arista, largo, lado, radio, *resto):
+        if len(resto) != 8:  # DimSide, 6 vacíos y BendAngle
+            raise TypeError(f"AddSync recibió {4 + len(resto)} argumentos; se esperan 12.")
+        angulo = _sin_vacio(resto[-1])
+        self._anotar(
+            "Flanges.AddSync",
+            arista.indice,
+            largo,
+            _sin_vacio(lado),
+            _sin_vacio(radio),
+            angulo,
+            tuple(_sin_vacio(r) for r in resto[:-1]),
+        )
+        if getattr(self.doc, "ModelingMode", None) != 1:
+            raise com_error(0x80004021, "Error no especificado")
+        if getattr(self.doc, "brida_rechazada", False):
+            raise com_error(0x80020009, "Exception occurred.")
+        sin_efecto = getattr(self.doc, "brida_sin_efecto", False)
+        operacion = self.agregar(0.0 if sin_efecto else largo * self.modelo.espesor * arista.largo)
+        self.doc.ultima_a_deshacer = operacion
+        return operacion
+
+
 class ModeloParteFalso:
     def __init__(self, doc: DocumentoFalso, espesor: float = 0.0) -> None:
         self.doc = doc
@@ -1858,6 +1898,7 @@ class ModeloParteFalso:
         self.RevolvedProtrusions = OperacionesFalsas(doc, "RevolvedProtrusion", 1, self)
         self.Rounds = RedondeosFalsos(doc, "Round", 1, self)
         self.Chamfers = RedondeosFalsos(doc, "Chamfer", 1, self)
+        self.Flanges = BridasFalsas(doc, "Flange", 1, self)
         self.Features = ColeccionFalsa([])
         self.Body = CuerpoDeParteFalso(self)
 
@@ -1866,7 +1907,7 @@ class ModeloParteFalso:
 
 
 ESPESOR_DE_CHAPA = 0.001
-ESCRITURAS = ESCRITURAS | {"Models.AddBaseTab"}
+ESCRITURAS = ESCRITURAS | {"Models.AddBaseTab", "Flanges.AddSync", "Undo"}
 
 
 class ModelosDeParteFalsos(ColeccionFalsa):
@@ -1888,6 +1929,7 @@ class ModelosDeParteFalsos(ColeccionFalsa):
         """Base de chapa: espesor del material (1 mm, como la plantilla por defecto)."""
         self.doc.registro.append(("Models.AddBaseTab", lado))
         self.doc._tocar("AddBaseTab")
+        self.doc.modo_al_crear_base = getattr(self.doc, "ModelingMode", None)
         modelo = ModeloParteFalso(self.doc, espesor=ESPESOR_DE_CHAPA)
         modelo.Tabs = OperacionesFalsas(self.doc, "Tab", 1, modelo)
         modelo.Tabs.agregar(perfil.area() * ESPESOR_DE_CHAPA)

@@ -20,6 +20,7 @@ from typing_extensions import TypedDict
 
 from se_cli.core import (
     acceso,
+    brida,
     croquis,
     documentos,
     ensamble,
@@ -342,15 +343,59 @@ def extrude(
 def sheetmetal_tab(
     profile: str | None = None,
     direction: Literal["normal", "reverse"] = "normal",
+    sync: bool = False,
     doc: Doc = None,
     timeout: Timeout = None,
 ) -> Sobre:
-    """Creá la base de una chapa (Tab) desde un perfil cerrado; el espesor es el del material."""
+    """Creá la base de una chapa (Tab) desde un perfil cerrado; el espesor es el del material.
+
+    Con sync, la base se crea en modo sincrónico (hace falta para sheetmetal_flange).
+    """
     with _respuesta() as (sobre, completar):
-        modelado.planificar_tab(profile, direction)
+        modelado.planificar_tab(profile, direction, sync)
         completar(
             _llamar(
-                lambda app: modelado.crear_tab(acceso.documento(app, doc), profile, direction),
+                lambda app: modelado.crear_tab(
+                    acceso.documento(app, doc), profile, direction, sync
+                ),
+                timeout,
+                sin_alertas=True,
+            )
+        )
+    return sobre
+
+
+@mcp.tool()
+def sheetmetal_flange(
+    edge: Annotated[int, Field(ge=1, description="Arista recta: índice de `se edges list`.")],
+    length: Annotated[str, Field(description="Longitud de la brida, ej. 30mm (>0).")],
+    angle: Annotated[
+        float, Field(gt=0, lt=180, description="Ángulo de la brida en grados.")
+    ] = brida.ANGULO_POR_DEFECTO,
+    direction: Annotated[
+        Literal["normal", "reverse"],
+        Field(description="normal: pared dentro de la huella de la base; reverse: fuera."),
+    ] = "normal",
+    radius: Annotated[
+        str | None,
+        Field(description="Radio interior del plegado, ej. 1mm. Por defecto, el del documento."),
+    ] = None,
+    units: Units = None,
+    doc: Doc = None,
+    timeout: Timeout = None,
+) -> Sobre:
+    """Creá una brida sobre una arista recta de una chapa con base sincrónica.
+
+    La base se crea con sheetmetal_tab (sync=true); con base ordenada da no_soportado.
+    """
+    with _respuesta() as (sobre, completar):
+        elegidas = unidades.parsear_unidades(units)
+        brida.planificar_brida(edge, length, angle, direction, radius)
+        completar(
+            _llamar(
+                lambda app: brida.crear_brida(
+                    acceso.documento(app, doc), edge, length, angle, direction, radius, elegidas
+                ),
                 timeout,
                 sin_alertas=True,
             )

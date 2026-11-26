@@ -27,7 +27,7 @@ import re
 from typing import Any
 
 from se_cli.core import unidades
-from se_cli.core.acceso import items, leer, opcional
+from se_cli.core.acceso import items, leer, opcional, tipo_de
 from se_cli.core.constants import (
     FeatureStatusConstants,
     GNTTypePropertyConstants,
@@ -132,15 +132,23 @@ def _unidad(dimension: str, elegidas: dict[str, str]) -> str:
 # --- Lectura de la topología ------------------------------------------------------------------
 
 
-def _cuerpo(doc: Any, comando: str) -> tuple[Any, Any]:
-    """`(modelo, cuerpo)` de una pieza o chapa en modo ordenado; si no, exit 2."""
-    exigir_modelable(doc, comando)
+def _cuerpo(doc: Any, comando: str, *, admite_sincronico: bool = False) -> tuple[Any, Any]:
+    """`(modelo, cuerpo)` de una pieza o chapa en modo ordenado; si no, exit 2.
+
+    `admite_sincronico` (solo lectura) deja pasar una chapa en modo sincrónico, la que arma
+    `se sheetmetal tab --sync`.
+    """
+    exigir_modelable(doc, comando, admite_sincronico=admite_sincronico)
     modelo = _modelo(doc)
     if modelo is None:
         raise ArgumentoInvalido(
             f"`{comando}` necesita un modelo con cuerpo: hacé primero una extrusión (`se extrude`)."
         )
     return modelo, leer(lambda: modelo.Body)
+
+
+def _es_chapa(doc: Any) -> bool:
+    return opcional(lambda: tipo_de(doc)) == "sheetmetal"
 
 
 def _aristas_del(cuerpo: Any) -> list[Any]:
@@ -224,7 +232,7 @@ def listar(doc: Any, elegidas: dict[str, str] | None = None) -> dict[str, Any]:
     El índice vale solo para esta lectura del cuerpo: cambia después de cada operación que lo
     modifica. `caras` son los índices (1-based) de `Body.Faces` que tocan la arista, con su tipo.
     """
-    _, cuerpo = _cuerpo(doc, "edges list")
+    _, cuerpo = _cuerpo(doc, "edges list", admite_sincronico=_es_chapa(doc))
     largo = _unidad(unidades.LONGITUD, elegidas or {})
     aristas = _aristas_del(cuerpo)
     caras = _caras_del(cuerpo)
