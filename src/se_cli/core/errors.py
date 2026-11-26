@@ -181,7 +181,7 @@ def _leer_excepinfo(error: BaseException) -> tuple[str | None, dict[str, Any]]:
     return descripcion, detalles
 
 
-def _scode_de(error: BaseException) -> int | None:
+def scode_de(error: BaseException) -> int | None:
     """`scode` del `excepinfo` de un com_error (índice 5), sin signo; None si no hay o es 0.
 
     Un `DISP_E_EXCEPTION` (0x80020009) trae ahí el error real del servidor (E_FAIL,
@@ -209,7 +209,7 @@ def traducir_com_error(error: BaseException) -> SeError:
     mensaje = descripcion or texto or "Error COM."
     if texto and texto != mensaje:
         detalles["strerror"] = texto
-    scode = _scode_de(error)
+    scode = scode_de(error)
     if scode is not None and scode != hresult:
         detalles["scode"] = formatear_hresult(scode)
     if hresult in HRESULTS_CANCELADO:

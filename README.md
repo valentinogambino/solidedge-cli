@@ -797,8 +797,15 @@ confirmadas en vivo (2026-11-25), todas a rutas nuevas:
   con `details.causa: "documento_vacio"`. STEP sí se escribe vacío.
 - **Ruta absoluta de 260 caracteres o más** (`SaveCopyAs` y `SaveAs`; 259 se guarda): exit 2 antes de
   tocar Solid Edge, con `details.largo` y `details.maximo`.
-- **Error sin explicación** (por ejemplo, `dxf` de un Draft en esta máquina da `E_FAIL` aun con
-  vistas, causa sin determinar): exit 4 con un mensaje que dice qué revisar y el `hresult` original.
+- **DXF de un Draft rechazado por acceso denegado** (`0x80020009` con scode `E_ACCESSDENIED`
+  `0x80070005`, y un modal "This is a read-only file. Choose another name." en Solid Edge): verificado
+  el 2026-11-26, el DXF (AC1021) y el DWG de un Draft con vistas se exportan bien con `SaveCopyAs`;
+  solo falló, una vez, la primera exportación DXF de una sesión de Solid Edge, sin causa determinada
+  y sin repetirse. `se export --format dxf` reintenta una vez ante ese error y, si funciona, el
+  resultado trae `"reintento": true`; si persiste, exit 6 con `details.causa: "acceso_denegado"`,
+  `details.scode`, y el archivo a medias se borra. Reintentar el comando suele funcionar.
+- **Error sin explicación** (cualquier otro `0x80020009` sin descripción de Solid Edge): exit 4 con un
+  mensaje que dice qué revisar y el `hresult` original.
 
 No son causas: documento nunca guardado, ruta con espacios o acentos, barra normal, extensión que
 no corresponde al tipo (`SaveCopyAs` no falla: con una extensión desconocida escribe el formato nativo; la
@@ -1056,7 +1063,7 @@ Validados el 2026-11-23 (croquis con arcos y relaciones 2D, el 2026-11-24) contr
 | `PlanarRelation3d.Offset` (escritura) | `asm relate --offset` | verificado: se escribe tras crear la relación y mueve la ocurrencia suelta (mate +5 mm: x=55 mm; align +5 mm: x=5 mm); el MCP dice que `AddPlanar` no admite offset, y es cierto, se pone después |
 | relación entre dos ocurrencias fijas | `asm relate` | verificado: `AddPlanar` NO falla, devuelve una relación con `Status` solved y `DetailedStatus` 4 (`BetweenFixed`) sin mover nada; la CLI la borra y da exit 4 con la pista de `ground --release` |
 | `Relation.Type` (planar -2058948880, axial 1472929712, ground 1959028688), `Occurrence1`/`Occurrence2`, `DetailedStatus`, `Delete()` | `asm relations list\|delete` | verificado; la ground trae `Occurrence` (las otras `Occurrence1/2`); `Offset` solo existe en la planar; el MCP documenta mal los tipos ("Type = 2 Planar") |
-| STEP, STL, Parasolid, IGES, PDF, DXF | `doc.SaveCopyAs(ruta)`, el formato sale de la extensión | verificado en pieza, chapa, ensamble y Draft; STEP con cabecera ISO-10303-21, STL binario con 12 triángulos por cubo, `.x_t` con cabecera Parasolid, IGES con sección de inicio |
+| STEP, STL, Parasolid, IGES, PDF, DXF | `doc.SaveCopyAs(ruta)`, el formato sale de la extensión | verificado en pieza, chapa, ensamble y Draft; STEP con cabecera ISO-10303-21, STL binario con 12 triángulos por cubo, `.x_t` con cabecera Parasolid, IGES con sección de inicio; el DXF de un Draft sale (AC1021, verificado 2026-11-26) y el DWG también (la CLI exporta `dxf`, no `dwg`); la primera exportación DXF de una sesión falló una vez con E_ACCESSDENIED sin repetirse, y la CLI reintenta una vez |
 | PNG | `View.SaveAsImage(ruta, 1920, 1080)` (Draft: alto o ancho según la hoja) | verificado en pieza, chapa y ensamble (con `View.Fit()` antes); **corregido** en Draft: su `SheetWindow` no tiene `View`, `Fit` y `SaveAsImage` son de la ventana |
 | Draft nuevo | `Documents.Add("SolidEdge.DraftDocument")` | verificado (hoja A2 por defecto) |
 | Documento desde una plantilla | `Documents.Add(ProgID, ruta_de_plantilla)` | verificado (2026-11-25) en pieza y Draft; **corregido**: `Documents.Add(ruta_de_plantilla)` da 0x80020009 (scode CO_E_CLASSSTRING) |
