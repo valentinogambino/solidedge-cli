@@ -1264,11 +1264,39 @@ class DocumentosFalsos(_ConFallos):
         return self._agregar(doc)
 
 
+BIBLIOTECAS_FALSAS = {
+    "Materials": ("Steel", "Aluminum, 1060", "Stainless Steel, 304"),
+    "Materials-DIN": ("S235JR",),
+}
+
+
 class TablaDeMaterialesFalsa:
-    """`Application.GetMaterialTable()`: el material de un documento está en su `material`."""
+    """`Application.GetMaterialTable()`: el material de un documento está en su `material`.
+
+    Como en vivo: `GetMaterialLibraryList` da `(nombres, cantidad)` y
+    `GetMaterialListFromLibrary` `(cantidad, nombres)`; `ApplyMaterialToDoc` con un nombre que no
+    está en la biblioteca da E_INVALIDARG. `aplicados` anota cada asignación.
+    """
+
+    def __init__(self, bibliotecas: dict[str, tuple[str, ...]] | None = None) -> None:
+        self.bibliotecas = BIBLIOTECAS_FALSAS if bibliotecas is None else bibliotecas
+        self.aplicados: list[tuple[str, str]] = []
 
     def GetCurrentMaterialName(self, doc: Any) -> str:
         return getattr(doc, "material", "")
+
+    def GetMaterialLibraryList(self) -> tuple:
+        return tuple(self.bibliotecas), len(self.bibliotecas)
+
+    def GetMaterialListFromLibrary(self, biblioteca: str) -> tuple:
+        nombres = self.bibliotecas[biblioteca]
+        return len(nombres), nombres
+
+    def ApplyMaterialToDoc(self, doc: Any, nombre: str, biblioteca: str) -> None:
+        if nombre not in self.bibliotecas.get(biblioteca, ()):
+            raise com_error(-2147352567, "Exception occurred.")
+        doc.material = nombre
+        self.aplicados.append((nombre, biblioteca))
 
 
 class AplicacionFalsa(_ConFallos):
@@ -1297,7 +1325,9 @@ class AplicacionFalsa(_ConFallos):
 
     def GetMaterialTable(self) -> TablaDeMaterialesFalsa:
         self._tocar("GetMaterialTable")
-        return TablaDeMaterialesFalsa()
+        if not hasattr(self, "tabla_de_materiales"):
+            self.tabla_de_materiales = TablaDeMaterialesFalsa()
+        return self.tabla_de_materiales
 
     @property
     def Version(self) -> str:
