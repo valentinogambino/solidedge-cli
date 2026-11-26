@@ -149,10 +149,38 @@ def _causa_probable(doc: Any) -> dict[str, Any]:
 
 
 PISTA_SIN_DESARROLLAR = (
-    "La chapa no se guardó. Solid Edge deja un desarrollo vacío en la sesión que la API no deja "
-    "borrar (FlatPatternModel no tiene Delete): no se exporta, un nuevo --create lo reutiliza y "
+    "La chapa no se guardó. Solid Edge dejó un desarrollo vacío en la sesión que no se pudo "
+    "deshacer (FlatPatternModel no tiene Delete): no se exporta, un nuevo --create lo reutiliza y "
     "se descarta cerrando sin guardar (`se docs close <doc> --discard`)."
 )
+
+PISTA_LIMPIADO = (
+    "La chapa no se guardó. El desarrollo vacío que dejó el intento se deshizo con un Undo: la "
+    "chapa quedó sin desarrollo, como estaba."
+)
+
+
+def _cantidad_de_desarrollos(doc: Any) -> int | None:
+    """`FlatPatternModels.Count` (None si no se puede leer)."""
+    return opcional(lambda: int(doc.FlatPatternModels.Count))
+
+
+def _limpiar_desarrollo_vacio(doc: Any, antes: int | None) -> bool:
+    """Deshace con un solo `doc.Undo()` el `FlatPatternModels.Add` de un intento fallido.
+
+    Verificado en vivo (2026-11-26): un `Undo` después del `FlatPatternModels.Add` cuyo
+    `FlatPatterns.Add` falló baja `FlatPatternModels.Count` de 1 a 0 sin tocar modelos, operaciones
+    ni volumen (el objeto desarrollo queda inválido). Solo se llama si la cuenta subió; devuelve si
+    la cuenta volvió a la de antes. Nunca levanta: el error original es el que importa.
+    """
+    despues = _cantidad_de_desarrollos(doc)
+    if antes is None or despues is None or despues <= antes:
+        return False
+    try:
+        leer(lambda: doc.Undo())
+    except Exception:  # noqa: BLE001 - no se tapa el error del desarrollo
+        return False
+    return _cantidad_de_desarrollos(doc) == antes
 
 
 def _crear_desarrollo(doc: Any, nombre: str) -> dict[str, Any]:
@@ -161,13 +189,16 @@ def _crear_desarrollo(doc: Any, nombre: str) -> dict[str, Any]:
     La arista es la primera de la cara elegida que tiene vértice inicial (`elegir_arista`). Si un
     intento anterior dejó un `FlatPatternModel` vacío, se reutiliza en vez de agregar otro
     (verificado en vivo: `FlatPatterns.Add` sobre ese mismo modelo funciona). Si Solid Edge rechaza
-    el desarrollo, exit 6 (`no_soportado`) con la causa probable en `details`.
+    el desarrollo, exit 6 (`no_soportado`) con la causa probable en `details`; el modelo vacío que
+    este comando agregó se deshace con un `Undo` (`desarrollo_vacio_limpiado`). Uno reutilizado no
+    se toca: no lo creó este comando.
     """
     indice, area, cara = elegir_cara(doc)
     indice_arista, arista, vertice = elegir_arista(cara)
     modelo = leer(lambda: doc.Models.Item(1))
     desarrollo = _desarrollo_vacio(doc)
     reutilizado = desarrollo is not None
+    antes = _cantidad_de_desarrollos(doc)
     if desarrollo is None:
         desarrollos = leer(lambda: doc.FlatPatternModels)
         desarrollo = leer(lambda: desarrollos.Add(modelo))
@@ -177,6 +208,7 @@ def _crear_desarrollo(doc: Any, nombre: str) -> dict[str, Any]:
         traducido = traducir(error)
         if not isinstance(traducido, ErrorCom):
             raise
+        limpiado = False if reutilizado else _limpiar_desarrollo_vacio(doc, antes)
         raise NoSoportado(
             f"Solid Edge no pudo desarrollar {nombre} (FlatPatterns.Add rechazó la cara "
             f"{indice} y la arista {indice_arista}).",
@@ -187,8 +219,9 @@ def _crear_desarrollo(doc: Any, nombre: str) -> dict[str, Any]:
                 "cara": {"indice": indice, "area_si": area, "criterio": CRITERIO_DE_CARA},
                 "arista": indice_arista,
                 "documento_guardado": False,
-                "desarrollo_vacio_en_sesion": True,
-                "hint": PISTA_SIN_DESARROLLAR,
+                "desarrollo_vacio_limpiado": limpiado,
+                "desarrollo_vacio_en_sesion": not limpiado,
+                "hint": PISTA_LIMPIADO if limpiado else PISTA_SIN_DESARROLLAR,
             },
         ) from error
     return {

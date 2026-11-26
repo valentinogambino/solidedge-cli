@@ -200,13 +200,16 @@ def test_flat_dxf_create_de_una_base_de_pieza_da_exit_6_clasificado(tmp_path):
     assert r.exit_code == 0, sobre
     d = ["--doc", chapa.name]
     try:
-        for intento in (1, 2):  # el segundo reutiliza el desarrollo vacío y falla igual de claro
+        for intento in (1, 2):  # el Undo limpia cada vez: el segundo falla igual de claro
             r, sobre = _correr("sheetmetal", "flat-dxf", "--create", *d)
             assert r.exit_code == 6, (intento, sobre)
             error = sobre["error"]
             assert error["code"] == "no_soportado" and error["hresult"] == "0x80020009"
             assert error["details"]["base"]["tipo"] == "ExtrudedProtrusion"
-            assert error["details"]["desarrollo_vacio_en_sesion"] is True
+            assert error["details"]["desarrollo_vacio_limpiado"] is True
+            assert error["details"]["desarrollo_vacio_en_sesion"] is False
+            r, sobre = _correr("com", "get", "ActiveDocument.FlatPatternModels.Count")
+            assert sobre["data"]["valor"] == 0, (intento, sobre)  # el Undo dejó la chapa limpia
         r, sobre = _correr("sheetmetal", "flat-dxf", *d)
         assert r.exit_code == 5, sobre  # el desarrollo vacío no se exporta
         assert not (tmp_path / "maciza.dxf").exists()

@@ -1006,16 +1006,22 @@ cierra, la reabre y recién ahí exporta (en una misma sesión el DXF puede sali
 - Si Solid Edge rechaza el desarrollo (`FlatPatterns.Add`), sale con **exit 6** (`no_soportado`,
   con el `hresult`) **sin guardar** la chapa. `error.details` trae `causa_probable`, `base` (la
   primera operación del modelo), `cara`, `arista`, `documento_guardado: false`,
-  `desarrollo_vacio_en_sesion` y un `hint`. Lo que se sabe que no se desarrolla: una chapa cuya
-  base es una operación de pieza (`ExtrudedProtrusion` o `RevolvedProtrusion`, por ejemplo hecha
-  por script; la CLI ya no la crea y la base de chapa sale de `se sheetmetal tab`), con cualquier
-  arista y espesor.
-- **Limitación**: el intento fallido deja en la sesión un `FlatPatternModel` vacío
-  (`FlatPatterns.Count == 0`) que la API no deja borrar (`FlatPatternModel` no tiene `Delete`). No
-  cuenta como desarrollo (sin `--create` sigue siendo exit 5, no un DXF vacío), un nuevo `--create`
-  lo reutiliza en vez de agregar otro (`cara.desarrollo_reutilizado: true`) y se descarta cerrando
-  la chapa sin guardar (`se docs close <doc> --discard`). Si el comando abrió la chapa por ruta, la
-  cierra sin guardar y no queda nada (`desarrollo_vacio_en_sesion: false`).
+  `desarrollo_vacio_limpiado`, `desarrollo_vacio_en_sesion` y un `hint`. Lo que se sabe que no se
+  desarrolla: una chapa cuya base es una operación de pieza (`ExtrudedProtrusion` o
+  `RevolvedProtrusion`, por ejemplo hecha por script; la CLI ya no la crea y la base de chapa sale
+  de `se sheetmetal tab`), con cualquier arista y espesor.
+- **Limpieza del intento fallido** (verificado en vivo el 2026-11-26): el `FlatPatternModels.Add` deja
+  un `FlatPatternModel` vacío (`FlatPatterns.Count == 0`) y `FlatPatternModel` no tiene `Delete`,
+  pero un solo `doc.Undo()` justo después lo quita: `FlatPatternModels.Count` baja de 1 a 0 sin tocar
+  modelos, operaciones ni volumen. El comando anota `Count` antes y, si el intento falla y `Count`
+  subió, llama a `Undo` una vez y verifica que `Count` volvió. `details.desarrollo_vacio_limpiado`
+  dice si se limpió (`true`: la chapa quedó sin desarrollo y `desarrollo_vacio_en_sesion` es
+  `false`). Si el `Undo` no pudo o no bajó la cuenta, `desarrollo_vacio_limpiado` es `false`, el
+  modelo vacío queda en la sesión (no cuenta como desarrollo: sin `--create` sigue siendo exit 5, no
+  un DXF vacío), un nuevo `--create` lo reutiliza (`cara.desarrollo_reutilizado: true`, sin `Undo`
+  porque ese modelo no lo creó este comando) y se descarta cerrando la chapa sin guardar
+  (`se docs close <doc> --discard`). Si el comando abrió la chapa por ruta, la cierra sin guardar y
+  no queda nada.
 
 Verificado en vivo (2026-11-23): una chapa sincrónica de 100 x 50 x 1 mm con una brida de 30 mm
 (radio interno 1 mm) da un DXF de 100 x 79.09 mm con 5 entidades; área x espesor coincide con el
@@ -1111,7 +1117,7 @@ están en la sección de cada comando.
 | hresult de "ocupado" (exit 7) | **no reproducible**: Solid Edge no rechaza llamadas (atiende o encola) |
 | un modal deja al comando esperando | **resuelto con `--timeout`** (opcional; sin él, la CLI espera sin límite): exit 7 al vencer el plazo, sin cerrar Solid Edge. Límites: una llamada única más larga que el plazo se corta; `se run` no tiene plazo (ver "Timeout") |
 | `features suppress` en operaciones sincrónicas | **imposible** por la API (exit 6, ver `features suppress`) |
-| `sheetmetal flat-dxf` sin desarrollo | exit 5 salvo `--create`; un `--create` fallido deja un `FlatPatternModel` vacío que la API no borra |
+| `sheetmetal flat-dxf` sin desarrollo | exit 5 salvo `--create`; un `--create` fallido deshace con un `Undo` el `FlatPatternModel` vacío que creó (`desarrollo_vacio_limpiado`) |
 | bridas y agujeros en chapa doblada | `sheetmetal tab` solo crea la base y no acepta una cara existente. Sin comando de brida: probado con `se run --allow-scripts` y `Flanges.AddSync` sobre una base creada en modo sincrónico. Después, en modo ordenado, `hole --plane front --direction reverse --through` perforó el tramo vertical. El DXF incluyó ambos agujeros y una línea de pliegue en `DOWN_CENTERLINES` |
 | `mass` sin densidad tras recalcular y guardar | **causa: la pieza no tiene material.** Sin material, `Model.GetPhysicalProperties` devuelve estado 2 y ceros tras `mass --density 7850` y `docs save` (también al reabrir); con un material aplicado (`MaterialTable.ApplyMaterialToDoc`) devuelve estado 1 sin guardar. Se asigna con `se material set` (desde el 2026-11-25). La CLI lo explica (ver "Propiedades físicas") |
 | vistas sobre el rótulo | el layout reserva 30 mm abajo y el rótulo ISO mide 50,8 mm: con escalas grandes una vista puede pisarlo |

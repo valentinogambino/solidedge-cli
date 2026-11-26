@@ -8,6 +8,7 @@ from com_falso import (
     AristaFalsa,
     CaraFalsa,
     ColeccionFalsa,
+    ComErrorFalso,
     FeatureFalsa,
     con_chapa,
     con_chapa_creable,
@@ -450,9 +451,56 @@ def test_create_no_desarrollable_da_exit_6_clasificado_y_no_guarda(cli, app_fals
     assert detalles["base"] == {"nombre": "Tab_1", "tipo": "Tab"}
     assert "rechazó el desarrollo" in detalles["causa_probable"]
     assert detalles["documento_guardado"] is False
-    assert detalles["desarrollo_vacio_en_sesion"] is True and "--discard" in detalles["hint"]
-    assert [c[0] for c in app_falsa.escrituras] == ["FlatPatternModels.Add", "FlatPatterns.Add"]
+    assert detalles["desarrollo_vacio_limpiado"] is True
+    assert detalles["desarrollo_vacio_en_sesion"] is False and "Undo" in detalles["hint"]
+    assert [c[0] for c in app_falsa.escrituras] == [
+        "FlatPatternModels.Add",
+        "FlatPatterns.Add",
+        "Undo",
+    ]
+    assert doc.FlatPatternModels.Count == 0
     assert not (tmp_path / "Chapa.dxf").exists()
+
+
+def test_create_fallido_hace_un_solo_undo_y_el_reintento_vuelve_a_crear(cli, app_falsa, tmp_path):
+    doc = _creable(app_falsa, tmp_path)
+    doc.no_desarrollable = True
+
+    r, _ = cli("sheetmetal", "flat-dxf", "--create")
+    assert r.exit_code == 6 and len(_llamadas(app_falsa, "Undo")) == 1
+    assert doc.FlatPatternModels.Count == 0
+
+    doc.no_desarrollable = False
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+    assert r.exit_code == 0, r.output
+    assert sobre["data"]["cara"]["desarrollo_reutilizado"] is False
+    assert len(_llamadas(app_falsa, "Undo")) == 1
+
+
+def test_create_fallido_si_el_undo_no_baja_la_cuenta_informa_que_no_se_limpio(
+    cli, app_falsa, tmp_path
+):
+    doc = _creable(app_falsa, tmp_path)
+    doc.no_desarrollable = True
+    doc.undo_deshace_el_desarrollo = False
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    detalles = sobre["error"]["details"]
+    assert r.exit_code == 6 and detalles["desarrollo_vacio_limpiado"] is False
+    assert detalles["desarrollo_vacio_en_sesion"] is True and "--discard" in detalles["hint"]
+    assert len(_llamadas(app_falsa, "Undo")) == 1 and doc.FlatPatternModels.Count == 1
+
+
+def test_create_fallido_con_undo_que_falla_no_tapa_el_error_original(cli, app_falsa, tmp_path):
+    doc = _creable(app_falsa, tmp_path)
+    doc.no_desarrollable = True
+    doc.fallar("Undo", ComErrorFalso(0x80020009, "Exception occurred."))
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    assert r.exit_code == 6 and sobre["error"]["code"] == "no_soportado"
+    assert sobre["error"]["details"]["desarrollo_vacio_limpiado"] is False
 
 
 def test_create_con_base_de_pieza_explica_la_causa(cli, app_falsa, tmp_path):
@@ -471,6 +519,7 @@ def test_create_con_base_de_pieza_explica_la_causa(cli, app_falsa, tmp_path):
 def test_reintento_reutiliza_el_desarrollo_vacio(cli, app_falsa, tmp_path):
     doc = _creable(app_falsa, tmp_path)
     doc.no_desarrollable = True
+    doc.undo_deshace_el_desarrollo = False  # el Undo no limpia: queda un modelo vacío
     r, _ = cli("sheetmetal", "flat-dxf", "--create")
     assert r.exit_code == 6 and doc.FlatPatternModels.Count == 1
 
@@ -486,6 +535,19 @@ def test_reintento_reutiliza_el_desarrollo_vacio(cli, app_falsa, tmp_path):
     assert sobre["data"]["cara"]["desarrollo_reutilizado"] is True
     assert len(_llamadas(app_falsa, "FlatPatternModels.Add")) == 1
     assert (tmp_path / "Chapa.dxf").read_bytes() == DXF_CON_ENTIDADES
+
+
+def test_create_fallido_sobre_un_modelo_vacio_reutilizado_no_hace_undo(cli, app_falsa, tmp_path):
+    doc = _creable(app_falsa, tmp_path)
+    doc.no_desarrollable = True
+    doc.undo_deshace_el_desarrollo = False
+    cli("sheetmetal", "flat-dxf", "--create")  # deja un modelo vacío (el Undo no lo limpió)
+    assert doc.FlatPatternModels.Count == 1 and len(_llamadas(app_falsa, "Undo")) == 1
+
+    r, sobre = cli("sheetmetal", "flat-dxf", "--create")
+
+    assert r.exit_code == 6 and sobre["error"]["details"]["desarrollo_vacio_limpiado"] is False
+    assert len(_llamadas(app_falsa, "Undo")) == 1 and doc.FlatPatternModels.Count == 1
 
 
 def test_create_no_desarrollable_abierto_por_ruta_se_cierra_sin_guardar(cli, app_falsa, tmp_path):
