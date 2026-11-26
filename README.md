@@ -1282,8 +1282,10 @@ La opción **Timeout (s)** (por defecto 120) fija cuánto espera cada herramient
 extraído y el Python 3.11 de sistema (`python -I -S server/main.py`), una sesión stdio real respondió
 `initialize` (protocolo 2025-06-18), `tools/list` y `status` con Solid Edge cerrado y abierto, y
 `docs_list`, `features_list`, `mass` y `export` STEP dieron lo mismo que la CLI contra Solid Edge
-226.00.01.04. La instalación en Claude Desktop no se probó (necesita su interfaz) y el paquete no
-está firmado.
+226.00.01.04. Claude Desktop cargó el servidor el 2026-11-25 configurado a mano, con una entrada
+`mcpServers` en `claude_desktop_config.json`, y su log registró la conexión a `solidedge-cli` con 16
+herramientas. Lo que sigue sin probar es instalar el `.mcpb` desde la interfaz (**Instalar
+extensión…**), y el paquete no está firmado.
 
 Abrí Solid Edge antes de usar las herramientas. Probá `status` para comprobar
 qué documento está activo. Usá rutas absolutas cuando le pidas a Claude que
