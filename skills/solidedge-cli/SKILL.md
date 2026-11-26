@@ -58,7 +58,7 @@ Copiá esta checklist y tachala:
 
 - Los índices de arista y cara **cambian después de cada operación** (`round`, `chamfer`, `extrude`): rehacé `se edges list` antes de la siguiente.
 - Las ocurrencias de ensamble **nacen fijas**: soltá una con `asm ground <occ> --release` antes de `asm relate`.
-- La base de una chapa se crea con `se sheetmetal tab`, no con `extrude`.
+- La base de una chapa se crea con `se sheetmetal tab` (con `--sync` si va a llevar brida), no con `extrude`.
 
 El resto de los errores conocidos, con causa y salida, está en [reference/errores.md](reference/errores.md).
 
@@ -90,4 +90,4 @@ Si algo no coincide con estos archivos, mandan `se <grupo> --help` y el README d
 
 ## Servidor MCP
 
-`se-mcp` (extra `mcp`) expone 16 tools con el mismo `{ok, data, error}`: `status`, `connect`, `docs_list`, `docs_open`, `docs_save`, `vars_get`, `vars_set`, `mass`, `material`, `export`, `features_list`, `sketch_profile`, `extrude`, `sheetmetal_tab`, `asm_add`, `asm_tree`. Cada una acepta `timeout` (segundos); sin él rige `SE_TIMEOUT` o 120. No expone `com`, `run` ni `quit`. Las tools que modifican (`vars_set`, `docs_save`, `docs_open`, `extrude`, `sketch_profile`, `sheetmetal_tab`, `asm_add`, `export` y `material` al asignar) llevan el mismo aviso previo al usuario, y el MCP no tiene `--dry-run` ni `--readonly`. En el cliente las tools aparecen con el prefijo del servidor (`Servidor:herramienta`). Detalle en [reference/comandos.md](reference/comandos.md#servidor-mcp-se-mcp).
+`se-mcp` (extra `mcp`) expone 17 tools con el mismo `{ok, data, error}`: `status`, `connect`, `docs_list`, `docs_open`, `docs_save`, `vars_get`, `vars_set`, `mass`, `material`, `export`, `features_list`, `sketch_profile`, `extrude`, `sheetmetal_tab`, `sheetmetal_flange`, `asm_add`, `asm_tree`. Cada una acepta `timeout` (segundos); sin él rige `SE_TIMEOUT` o 120. No expone `com`, `run` ni `quit`. Las tools que modifican (`vars_set`, `docs_save`, `docs_open`, `extrude`, `sketch_profile`, `sheetmetal_tab`, `sheetmetal_flange`, `asm_add`, `export` y `material` al asignar) llevan el mismo aviso previo al usuario, y el MCP no tiene `--dry-run` ni `--readonly`. En el cliente las tools aparecen con el prefijo del servidor (`Servidor:herramienta`). Detalle en [reference/comandos.md](reference/comandos.md#servidor-mcp-se-mcp).
