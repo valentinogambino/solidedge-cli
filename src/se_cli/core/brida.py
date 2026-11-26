@@ -12,9 +12,20 @@ BRLength, CRType, NeutralFactor, BnParamType, BendAngle, FlangeType, PartialFlan
 Los argumentos que no se piden van como `VT_EMPTY` y toman el valor por defecto de Solid Edge.
 Se pasan los doce primeros (hasta `BendAngle`), como el script de `test_vivo_chapa.py`.
 
-Sin probar en vivo todavía (ver `PENDIENTE-VIVO` en el README): la semántica exacta de
-`FlangeLength`, el valor de `ThicknessSide` para `--direction reverse` y si `InsideRadius` vacío
-toma el radio de plegado del documento.
+Medido en vivo (2026-11-26, Solid Edge 2026 Community, chapa de 1 mm, arista sobre la cara que
+mira hacia donde se levanta la brida):
+- `FlangeLength` se mide desde el plano de la cara que contiene la arista (`DimSide = igLeft`, el
+  valor por defecto) hasta el borde libre: la altura total sobre la cara opuesta es largo + espesor.
+  Con `DimSide = igRight` se mediría desde la cara opuesta (no se expone).
+- `ThicknessSide` no es un sentido sino de qué lado de la arista queda el material: `normal` =
+  `seFlangeMaterialInside` (4, la pared queda dentro de la huella de la base y el pliegue come
+  chapa) y `reverse` = `seFlangeMaterialOutside` (5, la pared queda fuera de la huella, que no se
+  recorta). `igLeft`/`igRight` dan E_FAIL (`0x80070057`). El sentido de levante lo fija la arista
+  elegida: una arista de la cara superior levanta hacia arriba y una de la inferior, hacia abajo.
+  Con `reverse` la pared sale un espesor más corta que con `normal` (volumen medido).
+- `InsideRadius` vacío toma la variable `BendRadius` del documento al momento de crear la brida;
+  el comando la lee y la informa.
+- `BendAngle` se pasa en radianes.
 """
 
 from __future__ import annotations
@@ -22,13 +33,19 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from se_cli.core import unidades
+from se_cli.core import unidades, variables
 from se_cli.core.acceso import exigir_tipo, leer, opcional
 from se_cli.core.constants import valor as constante
-from se_cli.core.errors import ArgumentoInvalido, ErrorCom, NoConectado, NoSoportado, Ocupado
+from se_cli.core.errors import (
+    ArgumentoInvalido,
+    ErrorCom,
+    NoConectado,
+    NoSoportado,
+    Ocupado,
+    traducir,
+)
 from se_cli.core.modelado import (
     DIRECCIONES_DE_TAB,
-    _lado,
     _modelo,
     _ultimo_nombre,
     _volumen,
@@ -38,6 +55,9 @@ from se_cli.core.modelado import (
 from se_cli.core.redondeos import _aristas_del, _seleccionar, _tipo_de_arista
 
 ANGULO_POR_DEFECTO = 90.0
+
+# `ThicknessSide`: de qué lado de la arista queda el material de la pared (ver el docstring).
+LADOS_DE_MATERIAL = {"normal": "seFlangeMaterialInside", "reverse": "seFlangeMaterialOutside"}
 
 PISTA_BASE_ORDENADA = (
     "Creá la base de la chapa con `se sheetmetal tab --sync` (modo sincrónico) y después la brida."
@@ -110,6 +130,17 @@ def _exigir_base_sincronica(doc: Any) -> Any:
     return modelo
 
 
+def _radio_del_documento(doc: Any) -> float | None:
+    """Radio de plegado (variable `BendRadius`) que Solid Edge usa si no se pasa `--radius`."""
+    try:
+        valor = variables.obtener(doc, "BendRadius")["valor_si"]
+    except (Ocupado, NoConectado):
+        raise
+    except Exception:  # noqa: BLE001 - sin la variable solo se pierde el dato informado
+        return None
+    return float(valor) if isinstance(valor, (int, float)) else None
+
+
 def _deshacer(doc: Any) -> bool:
     try:
         leer(lambda: doc.Undo())
@@ -144,20 +175,48 @@ def crear_brida(
         )
     vacio = _vacio()
     radio_si = datos["radio_si"]
-    lado = vacio if datos["direccion"] == "normal" else _lado("reverse")
+    radio_origen = "explicito"
+    if radio_si is None:
+        radio_si, radio_origen = _radio_del_documento(doc), "documento"
+        explicito = False
+    else:
+        explicito = True
+    lado = constante(LADOS_DE_MATERIAL[datos["direccion"]])
+    medida_desde = constante("igLeft")
     angulo_com = vacio if datos["angulo"] == ANGULO_POR_DEFECTO else math.radians(datos["angulo"])
     antes = _volumen(doc)
     flanges = leer(lambda: modelo.Flanges)
-    feature = leer(
-        lambda: flanges.AddSync(
-            objeto,
-            datos["longitud_si"],
-            lado,
-            vacio if radio_si is None else radio_si,
-            *([vacio] * 7),
-            angulo_com,
+    try:
+        feature = leer(
+            lambda: flanges.AddSync(
+                objeto,
+                datos["longitud_si"],
+                lado,
+                radio_si if explicito else vacio,
+                medida_desde,
+                *([vacio] * 6),
+                angulo_com,
+            )
         )
-    )
+    except Exception as causa:  # noqa: BLE001 - se traduce y se vuelve a levantar
+        error = traducir(causa)
+        if not isinstance(error, ErrorCom):
+            raise error from causa
+        raise ErrorCom(
+            "Solid Edge rechazó la brida con esos parámetros (no cambió el modelo). Probá otro "
+            f"--length (mayor que el radio más el espesor), --angle (entre unos 2 y 178) o "
+            f"--radius, o --direction {'normal' if datos['direccion'] == 'reverse' else 'reverse'}"
+            ", o revisá que la arista sirva para una brida.",
+            hresult=error.hresult,
+            details={
+                **(error.details or {}),
+                "causa": "brida_rechazada",
+                "arista": datos["arista"],
+                "longitud_si": datos["longitud_si"],
+                "angulo": datos["angulo"],
+                "radio_si": radio_si,
+            },
+        ) from causa
     despues = _volumen(doc)
     if antes is None or despues is None or despues - antes <= max(1e-15, abs(antes) * 1e-9):
         deshecho = _deshacer(doc)
@@ -184,6 +243,7 @@ def crear_brida(
         "angulo": datos["angulo"],
         "direccion": datos["direccion"],
         "radio_si": radio_si,
+        "radio_origen": radio_origen if radio_si is not None else None,
         "radio": None if radio_si is None else round(unidades.de_si(radio_si, largo), 12) + 0.0,
         "volumen_antes": antes,
         "volumen_despues": despues,

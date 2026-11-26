@@ -372,7 +372,10 @@ def sheetmetal_flange(
     angle: Annotated[
         float, Field(gt=0, lt=180, description="Ángulo de la brida en grados.")
     ] = brida.ANGULO_POR_DEFECTO,
-    direction: Literal["normal", "reverse"] = "normal",
+    direction: Annotated[
+        Literal["normal", "reverse"],
+        Field(description="normal: pared dentro de la huella de la base; reverse: fuera."),
+    ] = "normal",
     radius: Annotated[
         str | None,
         Field(description="Radio interior del plegado, ej. 1mm. Por defecto, el del documento."),

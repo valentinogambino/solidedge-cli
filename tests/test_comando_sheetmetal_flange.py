@@ -3,7 +3,13 @@
 import math
 
 import pytest
-from com_falso import GEOMETRIA_CIRCULO, GeometriaDeCuerpoFalsa, com_error, con_modelado
+from com_falso import (
+    GEOMETRIA_CIRCULO,
+    GeometriaDeCuerpoFalsa,
+    VariableFalsa,
+    com_error,
+    con_modelado,
+)
 
 ARISTA_LARGA = 9  # recta de 50 mm sobre x, en la caja falsa de 50 x 30 x 1 mm
 
@@ -94,12 +100,13 @@ def test_flange_camino_feliz(cli, app_falsa, base_sync):
     assert datos["arista"] == ARISTA_LARGA
     assert datos["longitud_si"] == pytest.approx(0.03) and datos["longitud"] == 30.0
     assert datos["angulo"] == 90.0 and datos["direccion"] == "normal"
-    assert datos["radio_si"] is None and datos["radio"] is None
+    assert datos["radio_si"] is None and datos["radio"] is None and datos["radio_origen"] is None
     assert datos["volumen_despues"] > datos["volumen_antes"]
     assert datos["unidades"] == {"longitud": "mm", "angulo": "deg"}
     [(_, arista, largo, lado, radio, angulo, vacios)] = _llamadas(app_falsa, "Flanges.AddSync")
     assert (arista, largo) == (ARISTA_LARGA, pytest.approx(0.03))
-    assert lado is None and radio is None and angulo is None and vacios == (None,) * 7
+    # lado = seFlangeMaterialInside (4), radio vacío, DimSide = igLeft (1) y 6 vacíos
+    assert lado == 4 and radio is None and angulo is None and vacios == (1, *([None] * 6))
     assert app_falsa.historial_alertas[-2:] == [False, True]
 
 
@@ -126,8 +133,31 @@ def test_flange_con_angulo_radio_y_direccion(cli, app_falsa, base_sync):
     assert datos["longitud"] == pytest.approx(1.0) and datos["angulo"] == 45.0
     assert datos["radio_si"] == pytest.approx(0.002) and datos["direccion"] == "reverse"
     [(_, _, largo, lado, radio, angulo, _)] = _llamadas(app_falsa, "Flanges.AddSync")
-    assert largo == pytest.approx(0.0254) and lado == 1  # igLeft
+    assert largo == pytest.approx(0.0254) and lado == 5  # seFlangeMaterialOutside
     assert radio == pytest.approx(0.002) and angulo == pytest.approx(math.radians(45))
+
+
+def test_flange_sin_radius_informa_el_radio_de_plegado_del_documento(cli, app_falsa, base_sync):
+    base_sync.Variables.agregar(VariableFalsa("BendRadius", 0.003))
+
+    r, sobre = cli("sheetmetal", "flange", "--edge", "9", "--length", "30mm", "--units", "mm")
+
+    assert r.exit_code == 0, r.output
+    datos = sobre["data"]
+    assert datos["radio_si"] == pytest.approx(0.003) and datos["radio_origen"] == "documento"
+    assert datos["radio"] == pytest.approx(3.0)
+    [(_, _, _, _, radio, _, _)] = _llamadas(app_falsa, "Flanges.AddSync")
+    assert radio is None  # Solid Edge toma ese mismo radio del documento
+
+
+def test_flange_con_radius_explicito_manda_sobre_el_del_documento(cli, base_sync):
+    base_sync.Variables.agregar(VariableFalsa("BendRadius", 0.003))
+
+    r, sobre = cli("sheetmetal", "flange", "--edge", "9", "--length", "30mm", "--radius", "2mm")
+
+    assert r.exit_code == 0, r.output
+    assert sobre["data"]["radio_si"] == pytest.approx(0.002)
+    assert sobre["data"]["radio_origen"] == "explicito"
 
 
 def test_flange_sin_units_sale_en_si(cli, base_sync):
@@ -205,6 +235,18 @@ def test_flange_con_base_ordenada_da_exit_6(cli, app_falsa, chapa):
     assert sobre["error"]["details"]["causa"] == "base_ordenada"
     assert "sheetmetal tab --sync" in sobre["error"]["message"]
     assert _llamadas(app_falsa, "Flanges.AddSync") == []
+
+
+def test_flange_rechazada_por_solid_edge_da_exit_4_con_causa(cli, app_falsa, base_sync):
+    base_sync.brida_rechazada = True
+
+    r, sobre = cli("sheetmetal", "flange", "--edge", "9", "--length", "30mm", "--angle", "179")
+
+    assert r.exit_code == 4 and sobre["error"]["code"] == "com_error"
+    assert "rechazó la brida" in sobre["error"]["message"]
+    detalles = sobre["error"]["details"]
+    assert detalles["causa"] == "brida_rechazada" and detalles["angulo"] == 179.0
+    assert _llamadas(app_falsa, "Undo") == []
 
 
 def test_flange_sin_efecto_se_deshace_y_da_exit_4(cli, app_falsa, base_sync):

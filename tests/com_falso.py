@@ -1867,7 +1867,7 @@ class BridasFalsas(OperacionesFalsas):
     """
 
     def AddSync(self, arista, largo, lado, radio, *resto):
-        if len(resto) != 8:  # DimSide..BendAngle (7 vacíos + BendAngle)
+        if len(resto) != 8:  # DimSide, 6 vacíos y BendAngle
             raise TypeError(f"AddSync recibió {4 + len(resto)} argumentos; se esperan 12.")
         angulo = _sin_vacio(resto[-1])
         self._anotar(
@@ -1881,6 +1881,8 @@ class BridasFalsas(OperacionesFalsas):
         )
         if getattr(self.doc, "ModelingMode", None) != 1:
             raise com_error(0x80004021, "Error no especificado")
+        if getattr(self.doc, "brida_rechazada", False):
+            raise com_error(0x80020009, "Exception occurred.")
         sin_efecto = getattr(self.doc, "brida_sin_efecto", False)
         operacion = self.agregar(0.0 if sin_efecto else largo * self.modelo.espesor * arista.largo)
         self.doc.ultima_a_deshacer = operacion
