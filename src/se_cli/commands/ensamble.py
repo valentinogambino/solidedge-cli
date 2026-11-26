@@ -60,7 +60,9 @@ RotOpcion = Annotated[
 @app.command("add")
 def agregar(
     ctx: typer.Context,
-    archivo: Annotated[str, typer.Argument(help="Pieza, chapa o ensamble (.par, .psm, .asm).")],
+    archivo: Annotated[
+        str, typer.Argument(help="Pieza, chapa, ensamble o weldment (.par, .psm, .asm, .pwd).")
+    ],
     at: Annotated[
         str | None,
         typer.Option("--at", help="Posición X,Y,Z (ej. 10mm,0,5mm). Sin unidad, metros."),
