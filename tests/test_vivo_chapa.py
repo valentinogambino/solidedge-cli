@@ -246,3 +246,49 @@ def test_chapa_entera_por_la_cli_tab_agujero_y_desarrollo(tmp_path):
         assert _entidades_dxf(tmp_path / "por_cli.dxf") == {"LINE": 4, "CIRCLE": 1}
     finally:
         _cerrar(nombre)
+
+
+@pytest.mark.live
+def test_chapa_con_brida_por_la_cli(tmp_path):
+    """Chapa 100x50x1 mm con base sincrónica y una brida de 30 mm sobre una arista recta larga."""
+    r, sobre = _correr("docs", "new", "sheetmetal")
+    assert r.exit_code == 0, sobre
+    nombre = sobre["data"]["nombre"]
+    chapa = tmp_path / "con_brida.psm"
+    try:
+        d = ["--doc", nombre]
+        r, sobre = _correr("sketch", "rect", "--width", "100mm", "--height", "50mm", *d)
+        assert r.exit_code == 0, sobre
+        r, sobre = _correr("sheetmetal", "tab", "--sync", *d)
+        assert r.exit_code == 0 and sobre["data"]["modo"] == "sincronico", sobre
+
+        r, sobre = _correr("edges", "list", "--units", "mm", *d)
+        assert r.exit_code == 0, sobre
+        rectas = [a for a in sobre["data"]["aristas"] if a["tipo"] == "linea"]
+        larga = max(rectas, key=lambda a: a["longitud"])
+        assert larga["longitud"] == pytest.approx(100.0, abs=0.01)
+
+        r, sobre = _correr(
+            "sheetmetal",
+            "flange",
+            "--edge",
+            str(larga["indice"]),
+            "--length",
+            "30mm",
+            "--units",
+            "mm",
+            *d,
+        )
+        assert r.exit_code == 0, sobre
+        datos = sobre["data"]
+        assert datos["volumen_despues"] > datos["volumen_antes"]
+
+        r, sobre = _correr("docs", "save-as", str(chapa), nombre)
+        assert r.exit_code == 0, sobre
+        nombre = chapa.name
+        r, sobre = _correr("sheetmetal", "flat-dxf", "--create", "--doc", nombre)
+        assert r.exit_code == 0, sobre
+        assert sobre["data"]["entidades_dxf"] > 0
+        assert sum(_entidades_dxf(tmp_path / "con_brida.dxf").values()) > 0
+    finally:
+        _cerrar(nombre)
