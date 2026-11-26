@@ -329,6 +329,23 @@ def test_png_activa_el_documento_y_restaura_el_activo(cli, app_falsa, tmp_path):
     assert app_falsa.ActiveDocument.Name == "B.par"
 
 
+@pytest.mark.parametrize("formato", ["pdf", "dxf"])
+def test_pdf_y_dxf_de_un_draft_no_activo_lo_activan_y_restauran_el_activo(
+    cli, app_falsa, tmp_path, formato
+):
+    # Con otro Draft activo, SaveCopyAs exporta el contenido del activo: hay que activar el pedido.
+    _doc(app_falsa, tmp_path, "A.dft", tipo=2)
+    _doc(app_falsa, tmp_path, "B.dft", tipo=2)  # queda activo
+
+    r, _ = cli("export", "--format", formato, "--doc", "A.dft")
+
+    assert r.exit_code == 0
+    activaciones = [c[1] for c in app_falsa.registro if c[0] == "Activate"]
+    assert activaciones == ["A.dft", "B.dft"]
+    assert _copias(app_falsa) == [("SaveCopyAs", "A.dft", str(tmp_path / f"A.{formato}"))]
+    assert app_falsa.ActiveDocument.Name == "B.dft"
+
+
 def test_png_sin_contenido_es_error(cli, app_falsa, tmp_path):
     doc = _doc(app_falsa, tmp_path)
     doc.modo_exportacion = "vacio"

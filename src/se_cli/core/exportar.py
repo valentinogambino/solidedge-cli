@@ -192,8 +192,27 @@ FORMATOS: dict[str, Formato] = {
     "stl": Formato("stl", ".stl", (".stl",), TIPOS_SOLIDOS, _exportar_stl),
     "x_t": Formato("x_t", ".x_t", (".x_t",), TIPOS_SOLIDOS, _exportar_x_t),
     "igs": Formato("igs", ".igs", (".igs", ".iges"), TIPOS_SOLIDOS, _exportar_igs),
-    "pdf": Formato("pdf", ".pdf", (".pdf",), TIPOS_DRAFT, _exportar_pdf, marca_de_agua=True),
-    "dxf": Formato("dxf", ".dxf", (".dxf",), TIPOS_DRAFT, _exportar_dxf, marca_de_agua=True),
+    # El PDF y el DXF de un Draft también salen de la ventana: con otro documento activo,
+    # `SaveCopyAs` exporta el contenido del activo en la hoja del pedido (verificado en vivo,
+    # 2026-11-26: el PDF de un A3 trajo el rótulo y las vistas del A4 activo).
+    "pdf": Formato(
+        "pdf",
+        ".pdf",
+        (".pdf",),
+        TIPOS_DRAFT,
+        _exportar_pdf,
+        requiere_ventana=True,
+        marca_de_agua=True,
+    ),
+    "dxf": Formato(
+        "dxf",
+        ".dxf",
+        (".dxf",),
+        TIPOS_DRAFT,
+        _exportar_dxf,
+        requiere_ventana=True,
+        marca_de_agua=True,
+    ),
     "png": Formato(
         "png", ".png", (".png",), TIPOS_CON_VENTANA, _exportar_png, requiere_ventana=True
     ),
