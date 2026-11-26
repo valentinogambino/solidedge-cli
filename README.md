@@ -846,7 +846,7 @@ se --json --dry-run export .\*.par --format step
 
 ```powershell
 se --json draft from-part C:\p\Pieza.par --views front,top,right,iso --scale auto --sheet A3 --pdf
-# {"ok": true, "data": {"draft": "C:\\p\\Pieza.dft", "modelo": "C:\\p\\Pieza.par", "hoja": {"nombre": "A3", "ancho": 0.42, "alto": 0.297, "origen": "solicitada", "fondo": "A3-Sheet"}, "escala": "1:2", "vistas": [{"nombre": "front", "orientacion": "igFrontView", "x": 0.1125, "y": 0.10425}, {"nombre": "top", "orientacion": "igTopView", "x": 0.1125, "y": 0.22275}, {"nombre": "right", "orientacion": "igRightView", "x": 0.3075, "y": 0.10425}, {"nombre": "iso", "orientacion": "igTopFrontRightView", "x": 0.3075, "y": 0.22275}], "abierto": false, "escala_auto": true, "pdf": "C:\\p\\Pieza.pdf", "pdf_bytes": 20480, "marca_de_agua": "presente", "nota": "Community Edition agrega la leyenda 'Solid Edge Community Edition' en gris claro, abajo a la izquierda de cada hoja. Va dibujada con trazos, no como texto."}, "error": null}
+# {"ok": true, "data": {"draft": "C:\\p\\Pieza.dft", "modelo": "C:\\p\\Pieza.par", "hoja": {"nombre": "A3", "ancho": 0.42, "alto": 0.297, "origen": "solicitada", "fondo": "A3-Sheet"}, "escala": "1:10", "escala_origen": "automatica", "area_util": {"x_min": 0.015, "y_min": 0.0658, "x_max": 0.405, "y_max": 0.282}, "vistas": [{"nombre": "front", "orientacion": "igFrontView", "x": 0.1125, "y": 0.11985}, {"nombre": "top", "orientacion": "igTopView", "x": 0.1125, "y": 0.22795}, {"nombre": "right", "orientacion": "igRightView", "x": 0.3075, "y": 0.11985}, {"nombre": "iso", "orientacion": "igTopFrontRightView", "x": 0.3075, "y": 0.22795}], "abierto": false, "escala_auto": true, "pdf": "C:\\p\\Pieza.pdf", "pdf_bytes": 20480, "marca_de_agua": "presente", "nota": "Community Edition agrega la leyenda 'Solid Edge Community Edition' en gris claro, abajo a la izquierda de cada hoja. Va dibujada con trazos, no como texto."}, "error": null}
 ```
 Crea un Draft nuevo (con `--template` si se pasa), enlaza el modelo (`.par`, `.psm` o `.asm`; si
 no existe, exit 5), coloca las vistas, lo guarda en `--out` (por defecto junto al modelo, con
@@ -857,21 +857,42 @@ medirlo para `--scale auto` y no estaba abierto.
 
 - `--views`: `front`, `top`, `right`, `left`, `bottom`, `back` e `iso` (alias `isometric`),
   hasta 6; por defecto `front,top,right,iso`. Un nombre inválido da exit 2.
-- `--scale`: `1:2`, `2:1`, `0.5` o `auto` (por defecto). Con `auto` se elige la escala normalizada
-  más grande entre 5:1, 2:1, 1:1, 1:2, 1:5, 1:10, 1:20, 1:50 y 1:100 con la que entran todas las
-  vistas en su celda, usando la caja del modelo (`Body.GetRange`, o `GetRangeBox` por ocurrencia
-  en un ensamble). Si la API no la da, usa 1:1 y devuelve `"escala_auto": false`.
+- `--scale`: `1:2`, `2:1`, `0.5` o `auto` (por defecto). Con `auto` se elige la mayor escala de la
+  serie ISO 5455 (50:1, 20:1, 10:1, 5:1, 2:1, 1:1, 1:2, 1:5, 1:10, 1:20, 1:50, 1:100, 1:200, 1:500 y
+  1:1000) con la que entran todas las vistas en su celda del área útil (ver abajo), usando la caja
+  del modelo (`Body.GetRange`, o `GetRangeBox` por ocurrencia en un ensamble). Si la API no la da,
+  usa 1:1 y devuelve `"escala_auto": false`. El resultado informa siempre `escala` y
+  `escala_origen` (`"automatica"` o `"explicita"`); `escala_auto` (`true`) solo aparece con `auto`.
+  Una `--scale` explícita que no entra **se respeta** (exit 0) y `data` trae una `advertencia` (que
+  dice que alguna vista puede pisar el rótulo o a otra vista) y `escala_maxima` (la mayor que
+  entra). Para poder avisar, con `--scale` también se mide el modelo (si no estaba abierto se abre y
+  se cierra sin guardar); si no se puede medir, no hay aviso y el plano se hace igual.
 - `--sheet`: `A5` a `A0` apaisadas. Sin esto se usa la hoja de la plantilla (A2 en la ISO Metric,
   o A3 si no se puede leer). Además del tamaño se reemplaza el fondo de la hoja (marco y cuadro de
   rotulación) por el `A<n>-Sheet` de la plantilla (`hoja.fondo`). Las plantillas métricas de Solid
   Edge 2026 (ISO, DIN, GB, JIS, UNI, ESKD y Metric) traen solo A4 a A1: para **A5 y A0** se genera
   el fondo (`hoja.fondo_generado`, ver abajo). Si no se puede generar, `fondo` es `null`, el motivo
   va en `hoja.fondo_error` y el plano se hace igual.
-- Las vistas reservan 30 mm abajo, menos que el rótulo de la plantilla ISO (50,8 mm de alto en A5–A2):
-  con escalas grandes una vista puede quedar sobre el rótulo, en cualquier tamaño de hoja.
-- Las vistas se reparten en una grilla de celdas sin superposición: la frontal abajo a la
-  izquierda, la superior encima, la derecha al lado y la isométrica en la esquina libre. Se deja un
-  margen de 15 mm y 30 mm abajo para el cuadro de rotulación.
+- **Área útil** (`area_util` en el resultado, en metros): excluye el marco de la hoja y **toda la
+  franja inferior de la altura real del rótulo** de cada tamaño, más 5 mm de holgura. Medidas de la
+  plantilla ISO de Solid Edge 2026 (en vivo, 2026-11-26, sobre los fondos A5 a A0):
+
+  | hojas | marco al borde | tope del rótulo (desde el borde inferior) | área útil desde abajo |
+  |---|---|---|---|
+  | A5, A4, A3, A2 | 10 mm | 60,8 mm (rótulo de 50,8 mm sobre el marco) | 65,8 mm |
+  | A1, A0 | 20 mm | 77,1 mm (rótulo de 57,1 mm) | 82,1 mm |
+
+  El área llega hasta 5 mm del marco a los lados y arriba. Una hoja de otro tamaño (por ejemplo, de
+  una plantilla propia) usa las medidas de A2 o de A1 según su ancho. Las constantes están en
+  `src/se_cli/core/vistas.py` (`MEDIDAS_DE_HOJA`, `HOLGURA`). La tabla de revisiones, arriba a la
+  derecha, no se descuenta.
+- Las vistas se reparten en una grilla de celdas sin superposición dentro del área útil: la frontal
+  abajo a la izquierda, la superior encima, la derecha al lado y la isométrica en la esquina libre.
+  Cada vista puede ocupar hasta el 85 % de su celda.
+- Verificado en vivo (2026-11-26): un prisma de 400 x 300 x 200 mm con `draft from-part --sheet A3`
+  y `--sheet A4` sin `--scale` salió a 1:10 y 1:20, con las cuatro vistas por encima del rótulo (se
+  miró el PDF rasterizado: ninguna vista toca el rótulo ni el marco). Con `--scale 1:1` sobre A4
+  (`explicita`) se respetó y avisó `escala_maxima: "1:20"`.
 
 #### Fondo generado para A5 y A0
 
@@ -1120,7 +1141,7 @@ están en la sección de cada comando.
 | `sheetmetal flat-dxf` sin desarrollo | exit 5 salvo `--create`; un `--create` fallido deshace con un `Undo` el `FlatPatternModel` vacío que creó (`desarrollo_vacio_limpiado`) |
 | bridas y agujeros en chapa doblada | `sheetmetal tab` solo crea la base y no acepta una cara existente. Sin comando de brida: probado con `se run --allow-scripts` y `Flanges.AddSync` sobre una base creada en modo sincrónico. Después, en modo ordenado, `hole --plane front --direction reverse --through` perforó el tramo vertical. El DXF incluyó ambos agujeros y una línea de pliegue en `DOWN_CENTERLINES` |
 | `mass` sin densidad tras recalcular y guardar | **causa: la pieza no tiene material.** Sin material, `Model.GetPhysicalProperties` devuelve estado 2 y ceros tras `mass --density 7850` y `docs save` (también al reabrir); con un material aplicado (`MaterialTable.ApplyMaterialToDoc`) devuelve estado 1 sin guardar. Se asigna con `se material set` (desde el 2026-11-25). La CLI lo explica (ver "Propiedades físicas") |
-| vistas sobre el rótulo | el layout reserva 30 mm abajo y el rótulo ISO mide 50,8 mm: con escalas grandes una vista puede pisarlo |
+| vistas sobre el rótulo | **resuelto** (2026-11-26): el área útil excluye el marco y toda la franja del rótulo de cada tamaño (60,8 mm en A5-A2, 77,1 mm en A1-A0) más 5 mm; `auto` elige la mayor escala ISO 5455 que entra y una `--scale` que no entra se respeta con una `advertencia` |
 | marca de agua de Community Edition | en el PDF, no se puede quitar (DXF y PNG no la traen) |
 
 **Cierres solos de Solid Edge (23 y 24/11):** no hubo crash: no hay eventos de error de `Edge.exe`

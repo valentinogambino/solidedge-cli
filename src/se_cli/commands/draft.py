@@ -33,7 +33,8 @@ def desde_modelo(
         str,
         typer.Option(
             "--scale",
-            help="Escala: 1:2, 2:1, 0.5 o auto (la normalizada más grande que entra).",
+            help="Escala: 1:2, 2:1, 0.5 o auto (la mayor de la serie ISO 5455 que entra en el "
+            "área útil, sin pisar el rótulo). Una escala que no entra se respeta y avisa.",
         ),
     ] = "auto",
     sheet: Annotated[
@@ -52,6 +53,11 @@ def desde_modelo(
     ] = False,
 ) -> None:
     """Creá un Draft con las vistas de un modelo y guardalo.
+
+    Las vistas van en el área útil de la hoja: dentro del marco y por encima del cuadro de
+    rotulación (su altura real en cada tamaño). Sin --scale se elige la escala de la serie ISO
+    5455 más grande con la que entran todas; con --scale que no entra se respeta (exit 0) y el
+    resultado trae una `advertencia` con la escala máxima que entra.
 
     Nunca cierra ni modifica el modelo fuente. El PDF puede salir con marca de agua en Community
     Edition (leyenda "Solid Edge Community Edition" abajo a la izquierda).

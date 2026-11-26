@@ -3,7 +3,7 @@
 import pytest
 from com_falso import ColeccionFalsa, ModeloFalso, OcurrenciaFalsa, com_error
 
-from se_cli.core import fondos
+from se_cli.core import fondos, vistas
 
 CAJA_CHICA = ((0.0, 0.0, 0.0), (0.02, 0.015, 0.01))
 
@@ -51,10 +51,16 @@ def test_vistas_por_defecto_con_escala_dada(cli, app_falsa, tmp_path):
         assert 0 < vista["x"] < 0.297 and 0 < vista["y"] < 0.21
     assert len({(v["x"], v["y"]) for v in data["vistas"]}) == 4
     # Con escala dada el modelo no se abre; el Draft guardado se cierra.
-    assert _llamadas(app_falsa, "Documents.Open") == []
+    # Con escala dada el modelo se abre igual solo para medirlo (avisar si no entra) y se cierra
+    # sin guardar; el Draft guardado se cierra.
+    assert _llamadas(app_falsa, "Documents.Open") == [("Documents.Open", str(modelo))]
     assert _llamadas(app_falsa, "ModelLinks.Add") == [("ModelLinks.Add", str(modelo))]
-    assert _llamadas(app_falsa, "SaveAs") == [("SaveAs", "Document1", str(draft))]
-    assert _llamadas(app_falsa, "Close") == [("Close", "Pieza.dft", False)]
+    assert _llamadas(app_falsa, "SaveAs") == [("SaveAs", "Document2", str(draft))]
+    assert _llamadas(app_falsa, "Close") == [
+        ("Close", "Pieza.dft", False),
+        ("Close", "Pieza.par", False),
+    ]
+    assert data["escala_origen"] == "explicita" and "advertencia" not in data
 
 
 def test_vistas_elegidas_y_hoja(cli, app_falsa, tmp_path):
@@ -300,7 +306,7 @@ def test_keep_open_deja_el_draft_abierto_y_activo(cli, app_falsa, tmp_path):
     r, sobre = cli("draft", "from-part", str(modelo), "--scale", "1", "--keep-open")
 
     assert r.exit_code == 0 and sobre["data"]["abierto"] is True
-    assert _llamadas(app_falsa, "Close") == []
+    assert _llamadas(app_falsa, "Close") == [("Close", "Pieza.par", False)]  # solo el modelo medido
     assert app_falsa.ActiveDocument.Name == "Pieza.dft" and previo.cerrado is False
 
 
@@ -341,8 +347,10 @@ def test_auto_abre_el_modelo_para_medirlo_y_lo_cierra_sin_guardar(cli, app_falsa
 
     assert r.exit_code == 0, r.output
     data = sobre["data"]
-    assert data["escala_auto"] is True and data["escala"] == "2:1"  # 20 x 15 x 10 mm en A4
-    assert {c[3] for c in _vistas(app_falsa)} == {2.0}
+    # 20 x 15 x 10 mm en A4: con 2:1 la isométrica (55 mm) pasaría el área útil sobre el rótulo.
+    assert data["escala_auto"] is True and data["escala"] == "1:1"
+    assert data["escala_origen"] == "automatica" and "advertencia" not in data
+    assert {c[3] for c in _vistas(app_falsa)} == {1.0}
     assert ("Close", "Pieza.par", False) in app_falsa.registro
     assert _llamadas(app_falsa, "Save") == []
 
@@ -419,7 +427,10 @@ def test_si_falla_una_vista_el_draft_se_descarta(cli, app_falsa, tmp_path):
     assert r.exit_code == 4 and sobre["error"]["message"] == "Vista inválida"
     assert not (tmp_path / "Pieza.dft").exists()
     assert _llamadas(app_falsa, "SaveAs") == []
-    assert _llamadas(app_falsa, "Close") == [("Close", "Document1", False)]
+    assert _llamadas(app_falsa, "Close") == [
+        ("Close", "Document2", False),
+        ("Close", "Pieza.par", False),
+    ]
     assert app_falsa.historial_alertas == [False, True]
 
 
@@ -457,3 +468,86 @@ def test_sin_instancia_da_exit_3(cli_sin_instancia, tmp_path):
     modelo = _modelo(tmp_path)
     r, sobre = cli_sin_instancia("draft", "from-part", str(modelo), "--scale", "1")
     assert r.exit_code == 3 and sobre["ok"] is False and sobre["error"]["code"] == "no_conectado"
+
+
+# --- Vistas sobre el rótulo: área útil y escala automática --------------------------------------
+
+PRISMA_GRANDE = ((0.0, 0.0, 0.0), (0.4, 0.3, 0.2))  # 400 x 300 x 200 mm
+
+
+def _cajas_de_vistas(data, caja):
+    """Rectángulo `(x0, y0, x1, y1)` que ocupa cada vista colocada, a la escala usada."""
+    dimension = tuple(b - a for a, b in zip(*caja, strict=True))
+    factor = {"1:1": 1.0, "1:2": 0.5, "1:5": 0.2, "1:10": 0.1, "1:20": 0.05}[data["escala"]]
+    cajas = []
+    for vista in data["vistas"]:
+        ancho, alto = vistas.extension_de_vista(vista["nombre"], dimension)
+        cajas.append(
+            (
+                vista["x"] - ancho * factor / 2,
+                vista["y"] - alto * factor / 2,
+                vista["x"] + ancho * factor / 2,
+                vista["y"] + alto * factor / 2,
+            )
+        )
+    return cajas
+
+
+@pytest.mark.parametrize("hoja", ["A4", "A3", "A1"])
+def test_auto_con_una_pieza_grande_queda_dentro_del_area_util_y_sobre_el_rotulo(
+    cli, app_falsa, tmp_path, hoja
+):
+    modelo = _modelo(tmp_path)
+    app_falsa._documentos.al_abrir["Pieza.par"] = {"caja": PRISMA_GRANDE}
+
+    r, sobre = cli("draft", "from-part", str(modelo), "--sheet", hoja)
+
+    assert r.exit_code == 0, r.output
+    data = sobre["data"]
+    assert data["escala_auto"] is True and data["escala_origen"] == "automatica"
+    assert "advertencia" not in data
+    marco, tope = vistas.MEDIDAS_DE_HOJA[hoja]
+    util = data["area_util"]
+    assert util["y_min"] == pytest.approx(tope + vistas.HOLGURA)
+    assert util["x_min"] == pytest.approx(marco + vistas.HOLGURA)
+    ancho, alto = vistas.HOJAS[hoja]
+    assert util["x_max"] == pytest.approx(ancho - marco - vistas.HOLGURA)
+    assert util["y_max"] == pytest.approx(alto - marco - vistas.HOLGURA)
+    for x0, y0, x1, y1 in _cajas_de_vistas(data, PRISMA_GRANDE):
+        assert y0 >= tope + vistas.HOLGURA - 1e-9  # por encima del rótulo
+        assert x0 >= util["x_min"] - 1e-9 and x1 <= util["x_max"] + 1e-9
+        assert y1 <= util["y_max"] + 1e-9
+
+
+def test_scale_explicita_que_no_entra_se_respeta_y_avisa(cli, app_falsa, tmp_path):
+    modelo = _modelo(tmp_path)
+    app_falsa._documentos.al_abrir["Pieza.par"] = {"caja": PRISMA_GRANDE}
+
+    r, sobre = cli("draft", "from-part", str(modelo), "--sheet", "A4", "--scale", "1:1")
+
+    assert r.exit_code == 0, r.output
+    data = sobre["data"]
+    assert data["escala"] == "1:1" and data["escala_origen"] == "explicita"
+    assert "escala_auto" not in data
+    assert {c[3] for c in _vistas(app_falsa)} == {1.0}
+    assert "no entra" in data["advertencia"] and "rótulo" in data["advertencia"]
+    assert data["escala_maxima"] == "1:20" and "1:20" in data["advertencia"]
+    assert (tmp_path / "Pieza.dft").exists()
+
+
+def test_scale_explicita_que_entra_no_avisa(cli, app_falsa, tmp_path):
+    modelo = _modelo(tmp_path)
+    app_falsa._documentos.al_abrir["Pieza.par"] = {"caja": PRISMA_GRANDE}
+
+    r, sobre = cli("draft", "from-part", str(modelo), "--sheet", "A4", "--scale", "1:20")
+
+    assert r.exit_code == 0
+    assert "advertencia" not in sobre["data"] and "escala_maxima" not in sobre["data"]
+
+
+def test_scale_explicita_sin_poder_medir_el_modelo_no_avisa_ni_falla(cli, app_falsa, tmp_path):
+    modelo = _modelo(tmp_path)
+
+    r, sobre = cli("draft", "from-part", str(modelo), "--sheet", "A4", "--scale", "1:1")
+
+    assert r.exit_code == 0 and "advertencia" not in sobre["data"]
