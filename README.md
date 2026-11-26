@@ -970,7 +970,7 @@ y respetan `--readonly` y `--dry-run`.
 ### `se sheetmetal tab`
 
 ```powershell
-se --json sheetmetal tab [--profile 1] [--direction normal|reverse] [--doc Chapa.psm]
+se --json sheetmetal tab [--profile 1] [--direction normal|reverse] [--sync] [--doc Chapa.psm]
 # {"ok": true, "data": {"operacion": "tab", "nombre": "Tab_1", "direccion": "normal", "perfil": 1, "modelo_base": true, "volumen_si": 5e-06}, "error": null}
 ```
 Crea la **base de una chapa** (`Models.AddBaseTab(perfil, lado)`) con un perfil cerrado de `se sketch`
@@ -979,6 +979,14 @@ material del lado de la normal del plano del perfil (`igRight`) y `reverse`, del
 `symmetric` u otro valor, exit 2. Solo en `sheetmetal` en modo ordenado (otro tipo o sincrónico,
 exit 2) y sin modelo base (si ya tiene, exit 2: para agregar material, `se extrude`). Sin perfiles,
 exit 5. `--readonly` da exit 6 y `--dry-run` informa el plan sin COM.
+
+Con `--sync` la base se crea en **modo sincrónico**: el comando pone
+`ModelingMode = seModelingModeSynchronous` justo antes de `AddBaseTab` (el perfil se hace antes,
+con `se sketch`, en modo ordenado) y `data` suma `"modo": "sincronico"`. Es la base que
+necesita `se sheetmetal flange`. Si `AddBaseTab` falla se restituye el modo previo. Con la chapa
+ya sincrónica, `se edges list` funciona (lectura); `round`, `chamfer`, `sketch`, `extrude` y
+`hole` siguen pidiendo modo ordenado. PENDIENTE-VIVO: que el perfil hecho en modo ordenado
+sobreviva al cambio de modo antes del Tab (el script de `test_vivo_chapa.py` lo hacía al revés).
 
 Recorrido verificado en vivo (2026-11-25, test `test_chapa_entera_por_la_cli_tab_agujero_y_desarrollo`):
 
@@ -991,6 +999,65 @@ se docs save-as C:\p\Chapa.psm
 se sheetmetal flat-dxf --create                       # DXF con 4 LINE y 1 CIRCLE
 ```
 `AddBaseTab` con `igRight` da el Tab de z = 0 a +1 mm y con `igLeft`, de -1 mm a 0.
+
+### `se sheetmetal flange`
+
+```powershell
+se --json sheetmetal flange --edge 9 --length 30mm [--units mm] [--angle 90] [--direction normal|reverse] [--radius 1mm] [--doc Chapa.psm]
+# {"ok": true, "data": {"operacion": "brida", "nombre": "Flange_1", "arista": 9, "longitud_si": 0.03, "longitud": 30.0, "angulo": 90.0, "direccion": "normal", "radio_si": null, "radio": null, "volumen_antes": 5e-06, "volumen_despues": 6.5e-06, "unidades": {"longitud": "mm", "angulo": "deg"}}, "error": null}
+```
+Levanta una **brida** sobre una arista recta de la base de una chapa (`Flanges.AddSync`).
+`--edge` es el índice de `se edges list` (la misma numeración que `round` y `chamfer`; los índices
+cambian con cada operación). `--length` (obligatoria, mayor que 0) lleva unidad (`30mm`; sin unidad,
+metros) y `--units` solo cambia cómo se muestra en `data`. `--angle` son grados, por defecto 90,
+dentro de (0, 180). `--direction` es `normal` (por defecto) o `reverse`. `--radius` es el radio
+interior del plegado; sin él se usa el del documento.
+
+Precondiciones, en este orden:
+
+| condición | resultado |
+|---|---|
+| argumento fuera de rango, longitud o radio no positivos, unidad inválida | exit 2, sin tocar Solid Edge |
+| el documento no es una chapa | exit 2 |
+| la chapa no tiene base | exit 2 (crearla con `se sheetmetal tab --sync`) |
+| la base es ordenada | exit 6, `no_soportado`, `details.causa = "base_ordenada"`; el mensaje indica `sheetmetal tab --sync` |
+| la arista no existe | exit 5 |
+| la arista no es recta (círculo, arco, otra) | exit 2 |
+| el volumen no aumentó tras `AddSync` | se llama a `doc.Undo()` una vez y exit 4, `details.causa = "brida_sin_efecto"` (`deshecho` dice si el `Undo` anduvo) |
+
+Mide `Body.Volume` antes y después: `volumen_antes` y `volumen_despues` van en `data`, en m3.
+`--readonly` da exit 6 y `--dry-run` informa el plan (valida todo, sin COM). Por MCP es
+`sheetmetal_flange` (con `length` y `radius` como texto con unidad).
+
+Argumentos de `AddSync(pLocatedEdge, FlangeLength, ThicknessSide, InsideRadius, DimSide, BRType,
+BRWidth, BRLength, CRType, NeutralFactor, BnParamType, BendAngle, ...)` (se pasan los doce primeros;
+los vacíos son `VT_EMPTY` y toman el valor por defecto de Solid Edge):
+
+| opción | argumento de `AddSync` |
+|---|---|
+| `--edge` | `pLocatedEdge`: la arista de `Body.Edges` |
+| `--length` | `FlangeLength`, en metros |
+| `--direction` | `ThicknessSide`: vacío con `normal`; `igLeft` con `reverse` |
+| `--radius` | `InsideRadius`, en metros; vacío si no se da |
+| `--angle` | `BendAngle`, en radianes; vacío con 90 (el valor por defecto) |
+| (sin opción) | `DimSide`, `BRType`, `BRWidth`, `BRLength`, `CRType`, `NeutralFactor`, `BnParamType`: vacíos |
+
+Recorrido pensado (la prueba en vivo `test_chapa_con_brida_por_la_cli` lo cubre; no se corrió todavía):
+
+```powershell
+se docs new sheetmetal
+se sketch rect --width 100mm --height 50mm
+se sheetmetal tab --sync
+se edges list                                         # elegir una arista recta larga
+se sheetmetal flange --edge 9 --length 30mm
+se docs save-as C:\p\Chapa.psm
+se sheetmetal flat-dxf --create
+```
+
+PENDIENTE-VIVO: semántica de `--length` (desde dónde mide `FlangeLength`: cara exterior, interior o plano medio, y si incluye el radio).
+PENDIENTE-VIVO: qué lado del espesor toma `--direction reverse` (el valor de `ThicknessSide` que se pasa es `igLeft`, sin verificar) y hacia dónde se levanta `normal`.
+PENDIENTE-VIVO: radio efectivo cuando no se da `--radius` (si `InsideRadius` vacío toma el radio de plegado del documento o falla; el script de prueba pasaba 1 mm explícito).
+PENDIENTE-VIVO: `--angle` distinto de 90 (el MCP de referencia lo verificó con 45) y el aspecto del DXF desarrollado con la brida.
 
 ### `se sheetmetal flat-dxf`
 
@@ -1137,7 +1204,7 @@ Validados el 2026-11-23 (croquis con arcos y relaciones 2D, el 2026-11-24) contr
 | Chaflán | `Model.Chamfers.AddEqualSetback(n, [aristas], distancia)`, `AddSetbackAngle(cara, n, [aristas], distancia, angulo)` | verificado, también con varias aristas en una llamada; leídos con `ChamferSetbackValue1` y `ChamferSetbackAngle`; con distancia 4 mm y 30 grados sobre una arista de 50 mm quitó 230.94 mm3 (catetos de 4 y 4 tan 30 mm), con cualquiera de las dos caras de la arista como referencia; con una arista vieja (de antes de una operación) la llamada levanta una excepción |
 | Operación imposible | `Status == igFeatureFailed` tras `Rounds.Add` / `Chamfers.Add*` | verificado: radio de 500 mm sobre una caja **no da error**: crea `Round_n` fallida, deja el volumen igual y hace fallar las operaciones nuevas hasta borrarla; `Feature.Delete()` la quita y el modelo vuelve a funcionar |
 | Desarrollo de chapa | `FlatPatternModels.Add(modelo)`, `FlatPatterns.Add(arista, cara, vértice)`, `Face.Geometry.Type == igPlane` | verificado en chapa con un doblez; en la sesión sincrónica probada el DXF salió con entidades aun sin reabrir, pero se reabre igual; **corregido** (2026-11-25): la arista tiene que tener `StartVertex` (la de un agujero no tiene) y un `FlatPatternModel` vacío se reutiliza |
-| Brida de chapa (solo para armar la prueba) | `ModelingMode = seModelingModeSynchronous` antes del tab + `Flanges.AddSync` | verificado; en modo ordenado `Flanges.Add*` no resuelve |
+| Brida de chapa | `ModelingMode = seModelingModeSynchronous` antes del tab (`se sheetmetal tab --sync`) + `Model.Flanges.AddSync(arista, largo, lado, radio, 7 vacíos, ángulo)` (`se sheetmetal flange`) | verificado por script con `AddSync` y 12 argumentos (el MCP de referencia lo verificó con ángulo y radio); en modo ordenado `Flanges.Add*` no resuelve y cambiar el modo después de un Tab ordenado da E_FAIL; el comando `flange` está probado solo con COM falso: ver los `PENDIENTE-VIVO` de `se sheetmetal flange` |
 | `se com` | `getattr` / `setattr` sobre late binding | verificado con `Documents.Item(...)`, `Models.Item(1)...`, `DisplayAlerts` |
 | `se run` | `main(app, args)` en el hilo STA | verificado con un script de solo lectura |
 | hresult de "ocupado" | `RPC_E_CALL_REJECTED` / `RPC_E_SERVERCALL_RETRYLATER` | no se pudo provocar (2026-11-25): Solid Edge 2026 no rechaza llamadas, las atiende o las encola (ver "Solid Edge ocupado") |
@@ -1157,7 +1224,7 @@ están en la sección de cada comando.
 | un modal deja al comando esperando | **resuelto con `--timeout`** (opcional; sin él, la CLI espera sin límite): exit 7 al vencer el plazo, sin cerrar Solid Edge. Límites: una llamada única más larga que el plazo se corta; `se run` no tiene plazo (ver "Timeout") |
 | `features suppress` en operaciones sincrónicas | **imposible** por la API (exit 6, ver `features suppress`) |
 | `sheetmetal flat-dxf` sin desarrollo | exit 5 salvo `--create`; un `--create` fallido deshace con un `Undo` el `FlatPatternModel` vacío que creó (`desarrollo_vacio_limpiado`) |
-| bridas y agujeros en chapa doblada | `sheetmetal tab` solo crea la base y no acepta una cara existente. Sin comando de brida: probado con `se run --allow-scripts` y `Flanges.AddSync` sobre una base creada en modo sincrónico. Después, en modo ordenado, `hole --plane front --direction reverse --through` perforó el tramo vertical. El DXF incluyó ambos agujeros y una línea de pliegue en `DOWN_CENTERLINES` |
+| `sheetmetal flat-dxf` sin desarrollo | exit 5 salvo `--create`; un `--create` fallido deja un `FlatPatternModel` vacío que la API no borra |
 | `mass` sin densidad tras recalcular y guardar | **causa: la pieza no tiene material.** Sin material, `Model.GetPhysicalProperties` devuelve estado 2 y ceros tras `mass --density 7850` y `docs save` (también al reabrir); con un material aplicado (`MaterialTable.ApplyMaterialToDoc`) devuelve estado 1 sin guardar. Se asigna con `se material set` (desde el 2026-11-25). La CLI lo explica (ver "Propiedades físicas") |
 | vistas sobre el rótulo | **resuelto** (2026-11-26): el área útil excluye el marco y toda la franja del rótulo de cada tamaño (60,8 mm en A5-A2, 77,1 mm en A1-A0) más 5 mm; `auto` elige la mayor escala ISO 5455 que entra y una `--scale` que no entra se respeta con una `advertencia` |
 | marca de agua de Community Edition | **limitación inherente a Community Edition** (verificada 2026-11-26 en A3 y A4): en el PDF, gris claro abajo a la izquierda dentro del marco, en cada página exportada; no se puede quitar. DXF y PNG no la traen |
@@ -1299,9 +1366,9 @@ no se serializan (solo datos planos).
 
 `uv run pytest` usa un COM falso y no necesita Solid Edge. Las pruebas con la marca `live`
 necesitan Solid Edge abierto y no corren por defecto: `uv run pytest -m live`.
-Hay 55 pruebas `live`; 5 de ellas (`tests/test_vivo_timeout.py`) abren un diálogo modal en Solid Edge
+Hay 56 pruebas `live`; 5 de ellas (`tests/test_vivo_timeout.py`) abren un diálogo modal en Solid Edge
 y no corren con `uv run pytest -m live` salvo que se defina `SE_LIVE_MODAL=1`. Avisá antes de
-correrlas: el diálogo queda visible unos segundos. Las pruebas unitarias son 1233.
+correrlas: el diálogo queda visible unos segundos. Las pruebas unitarias son 1268.
 `src/se_cli/core/constants.py` se regenera con `uv run python scripts/gen_constants.py`.
 Para una prueba rápida de COM contra una instancia abierta, abrí Solid Edge y corré
 `uv run python scripts/smoke.py`; los archivos quedan en `out/smoke/`.
@@ -1378,7 +1445,7 @@ usá `uv run --extra mcp se-mcp`.
 
 ### Herramientas
 
-El servidor expone 16 herramientas, todas sobre las mismas funciones de `src/se_cli/core/` que la
+El servidor expone 17 herramientas, todas sobre las mismas funciones de `src/se_cli/core/` que la
 CLI y con la misma respuesta `{ok, data, error}` (`error.code` igual al de la tabla de códigos de
 salida). Cada una valida sus argumentos contra su esquema (claves de más o tipos que no coinciden
 se rechazan antes de tocar Solid Edge).
@@ -1394,7 +1461,8 @@ se rechazan antes de tocar Solid Edge).
 | `features_list` | `se features list` |
 | `sketch_profile` | `se sketch profile` |
 | `extrude` | `se extrude` |
-| `sheetmetal_tab` | `se sheetmetal tab` (base de una chapa; `direction` `normal` o `reverse`) |
+| `sheetmetal_tab` | `se sheetmetal tab` (base de una chapa; `direction` `normal` o `reverse`; `sync` para la base sincrónica) |
+| `sheetmetal_flange` | `se sheetmetal flange` (brida sobre una arista recta; `edge`, `length`, `angle`, `direction`, `radius`, `units`) |
 | `asm_add`, `asm_tree` | `se asm add`, `se asm tree` |
 
 Todas aceptan `timeout` (segundos, mayor que 0 y hasta 3600; el esquema lo publica como
