@@ -14,19 +14,22 @@ Antes de cualquier receta: `se --json --timeout 120 status` y `docs list`, y avi
 
 ## Pieza con material y masa
 
+Lo mínimo para un prisma con masa es: `docs new part`, `sketch rect`, `extrude`, `material set`, `mass`. `hole`, `edges list`, `round` y `save-as` son opcionales. El nombre del documento nuevo sale de `data.nombre` en la salida de `docs new`; usalo después en `docs close <nombre>`.
+
 ```powershell
 se --json --timeout 120 docs new part
 se --json --timeout 120 sketch rect --plane top --width 100mm --height 50mm
 se --json --timeout 120 extrude 10mm
-se --json --timeout 120 hole --at 50mm,25mm --diameter 8mm --through
-se --json --timeout 120 edges list --units mm            # elegir por longitud y caras
-se --json --timeout 120 round 2mm --edges <índices de edges list>   # los de la lectura anterior, no copiar a ciegas
+se --json --timeout 120 hole --at 50mm,25mm --diameter 8mm --through   # opcional
+se --json --timeout 120 edges list --units mm            # opcional: elegir por longitud y caras
+se --json --timeout 120 round 2mm --edges <índices de edges list>   # opcional; los de la lectura anterior, no copiar a ciegas
 se --json --timeout 120 material list --library Materials
 se --json --timeout 120 material set Steel
 se --json --timeout 120 mass --units mm,g                # lee el material: no hace falta --density
-se --json --timeout 120 docs save-as C:\p\caja.par
+se --json --timeout 120 docs save-as C:\p\caja.par       # opcional
 ```
 
+- "Acero" a secas: `Steel` de la biblioteca `Materials` es el genérico (7833 kg/m3). Si el usuario pide uno específico (inoxidable, estructural, galvanizado, una norma), buscalo con `material list --library Materials` y, si hay duda, preguntale.
 - `material set` asigna el material y su densidad pero **no guarda**: el `save-as` del final lo guarda. Con material, `mass` sin `--density` da el valor real (acero de 7833 kg/m3: un prisma liso de 100 x 50 x 10 mm pesa 0.39165 kg; con el agujero y el redondeo de esta receta da algo menos). Usá `--density` solo si el usuario pide una densidad que no es la del material.
 - Para otro lado del plano, `extrude --direction reverse` o `symmetric`. Para cambiar una medida después, `vars list --units mm` y `vars set <nombre> 20mm`: el modelo se recalcula.
 - Verificá con `features list` (operaciones en orden y su estado) y comprobá la masa contra el volumen esperado cuando el usuario lo conozca.

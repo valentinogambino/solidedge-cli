@@ -41,7 +41,7 @@ Van antes del comando.
 - `se docs list`: `indice`, `nombre`, `ruta`, `tipo` (`part`, `assembly`, `draft`, `sheetmetal`, `weldment` o `desconocido`), `modificado`, `activo`, `solo_lectura`. `ruta` es `null` si el documento nunca se guardó.
 - `se docs active`: el activo; sin documento, exit 5.
 - `se docs open <ruta> [--read-only-doc]`: si ya estaba abierto lo activa (`ya_abierto: true`). Ruta inexistente: exit 5. `--read-only-doc` no abre en solo lectura de verdad (la API no lo soporta): mirá `solo_lectura` y `advertencia`.
-- `se docs new <tipo> [--template <ruta>]`: `part`, `assembly`, `draft`, `sheetmetal` o `weldment` (este exige `--template`). Tarda 2 a 4 s. Si vence el timeout, mirá `error.details.documento_pudo_crearse`: con `true` puede haber un documento sobrante (`docs list`, y `docs close <nombre> --discard` con confirmación).
+- `se docs new <tipo> [--template <ruta>]`: `part`, `assembly`, `draft`, `sheetmetal` o `weldment` (este exige `--template`). Tarda 2 a 4 s. La salida trae el documento creado (`data.nombre`, `indice`, `tipo`...): guardá el `nombre` para los comandos siguientes (`docs close <nombre>`). Si vence el timeout, mirá `error.details.documento_pudo_crearse`: con `true` puede haber un documento sobrante (`docs list`, y `docs close <nombre> --discard` con confirmación).
 - `se docs save [<doc>]`: un documento nunca guardado da exit 2 y pide `save-as`.
 - `se docs save-as <destino> [<doc>] [--overwrite]`: si el destino existe y no hay `--overwrite`, exit 6. Con `--overwrite` el anterior se aparta y se restaura si el guardado falla. Destino en uso: exit 6 con el original intacto; abierto en Solid Edge, `details.motivo = "archivo_en_uso"`; en uso por otro programa, `details.winerror` (32 o 33) y, con otro código, `motivo: "acceso_denegado"`.
 - `se docs close [<doc>] [--save | --discard]`: con cambios y sin flag se niega (exit 6). `--all` exige `--yes`; si algún documento tiene cambios y no hay flag, no cierra ninguno. `--discard` pide confirmación del usuario.
@@ -58,7 +58,7 @@ Todos aceptan `--doc`, salvo `material list` (solo `--library`).
 - `se props set <nombre> <valor> [--set Custom] [--save]`: no guarda el documento sin `--save`. En `Custom` crea la propiedad; en otro conjunto, una inexistente da exit 5.
 - `se material list [--library Materials|Materials-DIN]`: materiales por biblioteca (por defecto, todas). Biblioteca inexistente: exit 5.
 - `se material get`: el material del documento (`null` si no tiene).
-- `se material set <nombre> [--library ...]`: asigna material y densidad a una pieza o chapa (sin distinguir mayúsculas). **No guarda el documento.** Nombre inexistente: exit 5 (con `details.parecidos`). Solo pieza y chapa.
+- `se material set <nombre> [--library ...]`: asigna material y densidad a una pieza o chapa (sin distinguir mayúsculas). **No guarda el documento.** Nombre inexistente: exit 5 (con `details.parecidos`). Solo pieza y chapa. Si el usuario pide "acero" a secas, `Steel` de `Materials` es el genérico (7833 kg/m3); si pide uno específico (inoxidable, estructural, galvanizado, una norma), buscalo con `material list --library Materials` y, si hay duda, preguntale.
 
 ## Masa
 
@@ -95,7 +95,7 @@ Todos aceptan `--doc`. Un radio o chaflán demasiado grande da exit 4 y la opera
 Solo `assembly` (otro tipo, exit 2). `<occ>` es el `indice` de `asm tree` o el nombre (`caja.par:2`). Todos aceptan `--doc`; los que posicionan, `--units`.
 
 - `se asm tree [--depth 10] [--flat]`: árbol de ocurrencias, o lista de materiales por archivo con `--flat`.
-- `se asm add <archivo> [--at x,y,z] [--rot rx,ry,rz]`: inserta `.par`, `.psm` o `.asm` (el README lista también `.pwd`). Nace fijo. Sin unidad, metros y radianes.
+- `se asm add <archivo> [--at x,y,z] [--rot rx,ry,rz]`: inserta `.par`, `.psm`, `.asm` o `.pwd`. Nace fijo. Sin unidad, metros y radianes.
 - `se asm ground <occ> [--release]`: fija o suelta. Idempotente (`changed`).
 - `se asm move <occ> (--at x,y,z | --by dx,dy,dz) [--rot rx,ry,rz]`: `--at` absoluto, `--by` relativo (no van juntos).
 - `se asm remove <occ>`: borra la ocurrencia y sus relaciones, no el archivo.

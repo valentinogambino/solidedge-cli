@@ -10,7 +10,7 @@ compatibility: Windows con Solid Edge 2026 instalado y la CLI `se` en el PATH (`
 
 ## Seguridad (leer antes de operar)
 
-- Antes de un comando que **modifique o cierre** documentos, avisale al usuario si ya tenía documentos abiertos. Mirá `se --json docs list` primero.
+- Antes de un comando que **modifique o cierre** documentos, mirá `se --json docs list`. Si hay documentos del usuario, avisale qué se va a modificar antes de seguir; si no hay ninguno, seguí sin aviso trabajando solo sobre documentos nuevos.
 - Piden **confirmación explícita del usuario**, siempre: `se com set`, `se com invoke`, `se run`, `se quit` y `se docs close --discard`.
 - `se run` está bloqueado (exit 6) salvo `--allow-scripts`; el script corre con los permisos del usuario. `se com` rechaza el segmento `Quit`.
 - `se connect --launch` arranca Solid Edge en la máquina del usuario: preguntale o avisale antes de lanzarlo.
@@ -64,7 +64,7 @@ El resto de los errores conocidos, con causa y salida, está en [reference/error
 
 ## Timeout y diálogos modales
 
-`--timeout SEG` (`0 < SEG <= 3600`; si no, exit 2) tiene como alternativa la variable `SE_TIMEOUT`; el flag gana. Mide inactividad (segundos sin arrancar una llamada COM nueva), no la duración total, y no aplica a `se run`. Sin timeout, un modal deja a `se` esperando para siempre.
+`--timeout SEG` (`0 < SEG <= 3600`; si no, exit 2) tiene como alternativa la variable `SE_TIMEOUT` (`SE_TIMEOUT=120` en el entorno): alcanza con uno de los dos, y si están los dos gana el flag. Mide inactividad (segundos sin arrancar una llamada COM nueva), no la duración total, y no aplica a `se run`. Sin timeout, un modal deja a `se` esperando para siempre.
 
 Ante un exit 7 con `error.details.motivo = "timeout"`:
 
@@ -86,7 +86,7 @@ Leé solo la que haga falta:
 | un error, un exit code raro o un comportamiento inesperado | [reference/errores.md](reference/errores.md) |
 | croquis con arcos, tangencias y restricciones (`sketch profile`) | [reference/sketch-profile.md](reference/sketch-profile.md) |
 
-Si algo no coincide con estos archivos, mandan `se <grupo> --help` y el `README.md` del repo `solidedge-cli`.
+Si algo no coincide con estos archivos, mandan `se <grupo> --help` y el README del repo: https://github.com/valentinogambino/solidedge-cli
 
 ## Servidor MCP
 
