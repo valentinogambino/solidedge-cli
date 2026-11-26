@@ -383,11 +383,18 @@ entre cada paso; cerrado como imposible de evitar):
 | `DesignEdgebarFeatures` (el objeto) / `.Count` / `.Item(1).Name` | `false` / `true` / `true` |
 | `Body.Volume`, `Body.Faces(igQueryAll).Count`, `ProfileSets.Count`, `RefPlanes.Count`, `Variables.Count` | `false` |
 | `Model.Recompute()` | `true` |
-| `doc.Dirty = False` (o `0`) después | E_FAIL (0x80004005), sigue `true` |
+| `doc.Dirty = False` (o `0`) después | E_FAIL (0x80004005), sigue `true`; verificado de nuevo el 2026-11-26: `hr=0x80020009`, scode `0x80004005`, aunque la propiedad tenga setter |
 | `doc.Undo()` después | sin error, sigue `true` (y el modelo no cambia) |
 
 No hay una lista de operaciones que no pase por instanciarlas, así que la CLI no lo evita: lo
 informa. No marca limpio el documento ni deshace nada.
+
+Solo `doc.Save()` limpia `Dirty` (y reescribe el archivo), así que no hay forma de restaurar el
+estado limpio sin guardar. Pasa también con `se export` (verificado en vivo el 2026-11-26, en un
+documento reabierto desde disco, con `Dirty = false` antes): el PDF de un Draft (`SaveCopyAs`) y
+el PNG de cualquier tipo (el `View.Fit` que lo prepara) lo dejan en `true`, sin cambiar el archivo
+en disco (mismo tamaño, fecha y MD5). STEP, STL y DXF (`SaveCopyAs` sobre una pieza o un Draft
+limpios) no lo marcan. Como el archivo no cambió, cerrar con `--discard` no pierde nada.
 
 ```powershell
 se --json features suppress 2        # por índice (el de `features list`) o por nombre
@@ -751,11 +758,22 @@ sin tocar Solid Edge ni el disco. Corren con `DisplayAlerts` apagado (se restaur
 Edition 226.00.01.04 (ver la tabla de supuestos al final). Cada llamada a Solid Edge está aislada
 en una función pequeña de `src/se_cli/core/`.
 
-**Marca de agua (verificada mirando los archivos):** el **PDF** lleva la leyenda "Solid Edge
-Community Edition" en gris claro, abajo a la izquierda de cada hoja, dibujada con trazos (no es
-texto: buscar la cadena en el PDF no la encuentra). El **DXF** (de un Draft y del desarrollo de una
-chapa) no la trae, ni como texto ni como geometría; el PNG tampoco. Los resultados de `pdf` y `dxf`
-traen `"marca_de_agua": "presente"` o `"ausente"` y una `nota`.
+**Documento activo en PDF y DXF:** como el PNG, el PDF y el DXF de un Draft salen de la ventana: con
+otro documento activo, `SaveCopyAs` exporta el contenido del activo en una hoja del tamaño del
+pedido (verificado en vivo el 2026-11-26: el PDF de un A3 trajo el rótulo y las vistas del A4
+activo). Por eso `se export --doc <draft>` lo activa mientras exporta y devuelve la activación al
+documento que estaba activo.
+
+**Marca de agua (limitación inherente a Community Edition, verificada mirando los archivos el
+2026-11-26 y el 2026-11-23):** el **PDF** lleva la leyenda "Solid Edge Community Edition" en gris muy
+claro, abajo a la izquierda de la hoja: dentro del marco, a la izquierda del
+cuadro de rotulación y en la altura de su franja inferior (en A3 y A4, rasterizando el PDF con
+PyMuPDF y mirándolo). Va dibujada con trazos (no es texto: buscar la cadena en el PDF no la
+encuentra) y no se puede quitar. Un PDF de un Draft con dos hojas (`SHEET 1 OF 2`) salió con **una
+sola página**, la de la hoja 1 (que era la activa), también con la leyenda; no se probó qué exporta
+con otra hoja activa. El **DXF** (de un Draft y del desarrollo de una chapa)
+no la trae, ni como texto ni como geometría; el PNG tampoco. Los resultados de `pdf` y `dxf` traen
+`"marca_de_agua": "presente"` o `"ausente"` y una `nota`.
 
 ### Formatos y tipos de documento
 
@@ -797,8 +815,15 @@ confirmadas en vivo (2026-11-25), todas a rutas nuevas:
   con `details.causa: "documento_vacio"`. STEP sí se escribe vacío.
 - **Ruta absoluta de 260 caracteres o más** (`SaveCopyAs` y `SaveAs`; 259 se guarda): exit 2 antes de
   tocar Solid Edge, con `details.largo` y `details.maximo`.
-- **Error sin explicación** (por ejemplo, `dxf` de un Draft en esta máquina da `E_FAIL` aun con
-  vistas, causa sin determinar): exit 4 con un mensaje que dice qué revisar y el `hresult` original.
+- **DXF de un Draft rechazado por acceso denegado** (`0x80020009` con scode `E_ACCESSDENIED`
+  `0x80070005`, y un modal "This is a read-only file. Choose another name." en Solid Edge): verificado
+  el 2026-11-26, el DXF (AC1021) y el DWG de un Draft con vistas se exportan bien con `SaveCopyAs`;
+  solo falló, una vez, la primera exportación DXF de una sesión de Solid Edge, sin causa determinada
+  y sin repetirse. `se export --format dxf` reintenta una vez ante ese error y, si funciona, el
+  resultado trae `"reintento": true`; si persiste, exit 6 con `details.causa: "acceso_denegado"`,
+  `details.scode`, y el archivo a medias se borra. Reintentar el comando suele funcionar.
+- **Error sin explicación** (cualquier otro `0x80020009` sin descripción de Solid Edge): exit 4 con un
+  mensaje que dice qué revisar y el `hresult` original.
 
 No son causas: documento nunca guardado, ruta con espacios o acentos, barra normal, extensión que
 no corresponde al tipo (`SaveCopyAs` no falla: con una extensión desconocida escribe el formato nativo; la
@@ -839,7 +864,7 @@ se --json --dry-run export .\*.par --format step
 
 ```powershell
 se --json draft from-part C:\p\Pieza.par --views front,top,right,iso --scale auto --sheet A3 --pdf
-# {"ok": true, "data": {"draft": "C:\\p\\Pieza.dft", "modelo": "C:\\p\\Pieza.par", "hoja": {"nombre": "A3", "ancho": 0.42, "alto": 0.297, "origen": "solicitada", "fondo": "A3-Sheet"}, "escala": "1:2", "vistas": [{"nombre": "front", "orientacion": "igFrontView", "x": 0.1125, "y": 0.10425}, {"nombre": "top", "orientacion": "igTopView", "x": 0.1125, "y": 0.22275}, {"nombre": "right", "orientacion": "igRightView", "x": 0.3075, "y": 0.10425}, {"nombre": "iso", "orientacion": "igTopFrontRightView", "x": 0.3075, "y": 0.22275}], "abierto": false, "escala_auto": true, "pdf": "C:\\p\\Pieza.pdf", "pdf_bytes": 20480, "marca_de_agua": "presente", "nota": "Community Edition agrega la leyenda 'Solid Edge Community Edition' en gris claro, abajo a la izquierda de cada hoja. Va dibujada con trazos, no como texto."}, "error": null}
+# {"ok": true, "data": {"draft": "C:\\p\\Pieza.dft", "modelo": "C:\\p\\Pieza.par", "hoja": {"nombre": "A3", "ancho": 0.42, "alto": 0.297, "origen": "solicitada", "fondo": "A3-Sheet"}, "escala": "1:10", "escala_origen": "automatica", "area_util": {"x_min": 0.015, "y_min": 0.0658, "x_max": 0.405, "y_max": 0.282}, "vistas": [{"nombre": "front", "orientacion": "igFrontView", "x": 0.1125, "y": 0.11985}, {"nombre": "top", "orientacion": "igTopView", "x": 0.1125, "y": 0.22795}, {"nombre": "right", "orientacion": "igRightView", "x": 0.3075, "y": 0.11985}, {"nombre": "iso", "orientacion": "igTopFrontRightView", "x": 0.3075, "y": 0.22795}], "abierto": false, "escala_auto": true, "pdf": "C:\\p\\Pieza.pdf", "pdf_bytes": 20480, "marca_de_agua": "presente", "nota": "Community Edition agrega la leyenda 'Solid Edge Community Edition' en gris claro, abajo a la izquierda de cada hoja. Va dibujada con trazos, no como texto."}, "error": null}
 ```
 Crea un Draft nuevo (con `--template` si se pasa), enlaza el modelo (`.par`, `.psm` o `.asm`; si
 no existe, exit 5), coloca las vistas, lo guarda en `--out` (por defecto junto al modelo, con
@@ -850,21 +875,42 @@ medirlo para `--scale auto` y no estaba abierto.
 
 - `--views`: `front`, `top`, `right`, `left`, `bottom`, `back` e `iso` (alias `isometric`),
   hasta 6; por defecto `front,top,right,iso`. Un nombre inválido da exit 2.
-- `--scale`: `1:2`, `2:1`, `0.5` o `auto` (por defecto). Con `auto` se elige la escala normalizada
-  más grande entre 5:1, 2:1, 1:1, 1:2, 1:5, 1:10, 1:20, 1:50 y 1:100 con la que entran todas las
-  vistas en su celda, usando la caja del modelo (`Body.GetRange`, o `GetRangeBox` por ocurrencia
-  en un ensamble). Si la API no la da, usa 1:1 y devuelve `"escala_auto": false`.
+- `--scale`: `1:2`, `2:1`, `0.5` o `auto` (por defecto). Con `auto` se elige la mayor escala de la
+  serie ISO 5455 (50:1, 20:1, 10:1, 5:1, 2:1, 1:1, 1:2, 1:5, 1:10, 1:20, 1:50, 1:100, 1:200, 1:500 y
+  1:1000) con la que entran todas las vistas en su celda del área útil (ver abajo), usando la caja
+  del modelo (`Body.GetRange`, o `GetRangeBox` por ocurrencia en un ensamble). Si la API no la da,
+  usa 1:1 y devuelve `"escala_auto": false`. El resultado informa siempre `escala` y
+  `escala_origen` (`"automatica"` o `"explicita"`); `escala_auto` (`true`) solo aparece con `auto`.
+  Una `--scale` explícita que no entra **se respeta** (exit 0) y `data` trae una `advertencia` (que
+  dice que alguna vista puede pisar el rótulo o a otra vista) y `escala_maxima` (la mayor que
+  entra). Para poder avisar, con `--scale` también se mide el modelo (si no estaba abierto se abre y
+  se cierra sin guardar); si no se puede medir, no hay aviso y el plano se hace igual.
 - `--sheet`: `A5` a `A0` apaisadas. Sin esto se usa la hoja de la plantilla (A2 en la ISO Metric,
   o A3 si no se puede leer). Además del tamaño se reemplaza el fondo de la hoja (marco y cuadro de
   rotulación) por el `A<n>-Sheet` de la plantilla (`hoja.fondo`). Las plantillas métricas de Solid
   Edge 2026 (ISO, DIN, GB, JIS, UNI, ESKD y Metric) traen solo A4 a A1: para **A5 y A0** se genera
   el fondo (`hoja.fondo_generado`, ver abajo). Si no se puede generar, `fondo` es `null`, el motivo
   va en `hoja.fondo_error` y el plano se hace igual.
-- Las vistas reservan 30 mm abajo, menos que el rótulo de la plantilla ISO (50,8 mm de alto en A5–A2):
-  con escalas grandes una vista puede quedar sobre el rótulo, en cualquier tamaño de hoja.
-- Las vistas se reparten en una grilla de celdas sin superposición: la frontal abajo a la
-  izquierda, la superior encima, la derecha al lado y la isométrica en la esquina libre. Se deja un
-  margen de 15 mm y 30 mm abajo para el cuadro de rotulación.
+- **Área útil** (`area_util` en el resultado, en metros): excluye el marco de la hoja y **toda la
+  franja inferior de la altura real del rótulo** de cada tamaño, más 5 mm de holgura. Medidas de la
+  plantilla ISO de Solid Edge 2026 (en vivo, 2026-11-26, sobre los fondos A5 a A0):
+
+  | hojas | marco al borde | tope del rótulo (desde el borde inferior) | área útil desde abajo |
+  |---|---|---|---|
+  | A5, A4, A3, A2 | 10 mm | 60,8 mm (rótulo de 50,8 mm sobre el marco) | 65,8 mm |
+  | A1, A0 | 20 mm | 77,1 mm (rótulo de 57,1 mm) | 82,1 mm |
+
+  El área llega hasta 5 mm del marco a los lados y arriba. Una hoja de otro tamaño (por ejemplo, de
+  una plantilla propia) usa las medidas de A2 o de A1 según su ancho. Las constantes están en
+  `src/se_cli/core/vistas.py` (`MEDIDAS_DE_HOJA`, `HOLGURA`). La tabla de revisiones, arriba a la
+  derecha, no se descuenta.
+- Las vistas se reparten en una grilla de celdas sin superposición dentro del área útil: la frontal
+  abajo a la izquierda, la superior encima, la derecha al lado y la isométrica en la esquina libre.
+  Cada vista puede ocupar hasta el 85 % de su celda.
+- Verificado en vivo (2026-11-26): un prisma de 400 x 300 x 200 mm con `draft from-part --sheet A3`
+  y `--sheet A4` sin `--scale` salió a 1:10 y 1:20, con las cuatro vistas por encima del rótulo (se
+  miró el PDF rasterizado: ninguna vista toca el rótulo ni el marco). Con `--scale 1:1` sobre A4
+  (`explicita`) se respetó y avisó `escala_maxima: "1:20"`.
 
 #### Fondo generado para A5 y A0
 
@@ -999,16 +1045,22 @@ cierra, la reabre y recién ahí exporta (en una misma sesión el DXF puede sali
 - Si Solid Edge rechaza el desarrollo (`FlatPatterns.Add`), sale con **exit 6** (`no_soportado`,
   con el `hresult`) **sin guardar** la chapa. `error.details` trae `causa_probable`, `base` (la
   primera operación del modelo), `cara`, `arista`, `documento_guardado: false`,
-  `desarrollo_vacio_en_sesion` y un `hint`. Lo que se sabe que no se desarrolla: una chapa cuya
-  base es una operación de pieza (`ExtrudedProtrusion` o `RevolvedProtrusion`, por ejemplo hecha
-  por script; la CLI ya no la crea y la base de chapa sale de `se sheetmetal tab`), con cualquier
-  arista y espesor.
-- **Limitación**: el intento fallido deja en la sesión un `FlatPatternModel` vacío
-  (`FlatPatterns.Count == 0`) que la API no deja borrar (`FlatPatternModel` no tiene `Delete`). No
-  cuenta como desarrollo (sin `--create` sigue siendo exit 5, no un DXF vacío), un nuevo `--create`
-  lo reutiliza en vez de agregar otro (`cara.desarrollo_reutilizado: true`) y se descarta cerrando
-  la chapa sin guardar (`se docs close <doc> --discard`). Si el comando abrió la chapa por ruta, la
-  cierra sin guardar y no queda nada (`desarrollo_vacio_en_sesion: false`).
+  `desarrollo_vacio_limpiado`, `desarrollo_vacio_en_sesion` y un `hint`. Lo que se sabe que no se
+  desarrolla: una chapa cuya base es una operación de pieza (`ExtrudedProtrusion` o
+  `RevolvedProtrusion`, por ejemplo hecha por script; la CLI ya no la crea y la base de chapa sale
+  de `se sheetmetal tab`), con cualquier arista y espesor.
+- **Limpieza del intento fallido** (verificado en vivo el 2026-11-26): el `FlatPatternModels.Add` deja
+  un `FlatPatternModel` vacío (`FlatPatterns.Count == 0`) y `FlatPatternModel` no tiene `Delete`,
+  pero un solo `doc.Undo()` justo después lo quita: `FlatPatternModels.Count` baja de 1 a 0 sin tocar
+  modelos, operaciones ni volumen. El comando anota `Count` antes y, si el intento falla y `Count`
+  subió, llama a `Undo` una vez y verifica que `Count` volvió. `details.desarrollo_vacio_limpiado`
+  dice si se limpió (`true`: la chapa quedó sin desarrollo y `desarrollo_vacio_en_sesion` es
+  `false`). Si el `Undo` no pudo o no bajó la cuenta, `desarrollo_vacio_limpiado` es `false`, el
+  modelo vacío queda en la sesión (no cuenta como desarrollo: sin `--create` sigue siendo exit 5, no
+  un DXF vacío), un nuevo `--create` lo reutiliza (`cara.desarrollo_reutilizado: true`, sin `Undo`
+  porque ese modelo no lo creó este comando) y se descarta cerrando la chapa sin guardar
+  (`se docs close <doc> --discard`). Si el comando abrió la chapa por ruta, la cierra sin guardar y
+  no queda nada.
 
 Verificado en vivo (2026-11-23): una chapa sincrónica de 100 x 50 x 1 mm con una brida de 30 mm
 (radio interno 1 mm) da un DXF de 100 x 79.09 mm con 5 entidades; área x espesor coincide con el
@@ -1056,7 +1108,7 @@ Validados el 2026-11-23 (croquis con arcos y relaciones 2D, el 2026-11-24) contr
 | `PlanarRelation3d.Offset` (escritura) | `asm relate --offset` | verificado: se escribe tras crear la relación y mueve la ocurrencia suelta (mate +5 mm: x=55 mm; align +5 mm: x=5 mm); el MCP dice que `AddPlanar` no admite offset, y es cierto, se pone después |
 | relación entre dos ocurrencias fijas | `asm relate` | verificado: `AddPlanar` NO falla, devuelve una relación con `Status` solved y `DetailedStatus` 4 (`BetweenFixed`) sin mover nada; la CLI la borra y da exit 4 con la pista de `ground --release` |
 | `Relation.Type` (planar -2058948880, axial 1472929712, ground 1959028688), `Occurrence1`/`Occurrence2`, `DetailedStatus`, `Delete()` | `asm relations list\|delete` | verificado; la ground trae `Occurrence` (las otras `Occurrence1/2`); `Offset` solo existe en la planar; el MCP documenta mal los tipos ("Type = 2 Planar") |
-| STEP, STL, Parasolid, IGES, PDF, DXF | `doc.SaveCopyAs(ruta)`, el formato sale de la extensión | verificado en pieza, chapa, ensamble y Draft; STEP con cabecera ISO-10303-21, STL binario con 12 triángulos por cubo, `.x_t` con cabecera Parasolid, IGES con sección de inicio |
+| STEP, STL, Parasolid, IGES, PDF, DXF | `doc.SaveCopyAs(ruta)`, el formato sale de la extensión | verificado en pieza, chapa, ensamble y Draft; STEP con cabecera ISO-10303-21, STL binario con 12 triángulos por cubo, `.x_t` con cabecera Parasolid, IGES con sección de inicio; el DXF de un Draft sale (AC1021, verificado 2026-11-26) y el DWG también (la CLI exporta `dxf`, no `dwg`); la primera exportación DXF de una sesión falló una vez con E_ACCESSDENIED sin repetirse, y la CLI reintenta una vez |
 | PNG | `View.SaveAsImage(ruta, 1920, 1080)` (Draft: alto o ancho según la hoja) | verificado en pieza, chapa y ensamble (con `View.Fit()` antes); **corregido** en Draft: su `SheetWindow` no tiene `View`, `Fit` y `SaveAsImage` son de la ventana |
 | Draft nuevo | `Documents.Add("SolidEdge.DraftDocument")` | verificado (hoja A2 por defecto) |
 | Documento desde una plantilla | `Documents.Add(ProgID, ruta_de_plantilla)` | verificado (2026-11-25) en pieza y Draft; **corregido**: `Documents.Add(ruta_de_plantilla)` da 0x80020009 (scode CO_E_CLASSSTRING) |
@@ -1098,17 +1150,17 @@ están en la sección de cada comando.
 | tema | estado |
 |---|---|
 | `draft from-part --sheet A5` y `A0` sin fondo | **resuelto**: el fondo se genera desde el de la plantilla (ver "Fondo generado para A5 y A0") |
-| `features list` marca el documento como modificado | **imposible de evitar**: pasa con algunos archivos y una sola vez; no hay lectura que no lo marque ni forma de limpiarlo. Se informa en `modificado_por_lectura` |
+| `features list` marca el documento como modificado | **imposible de evitar**: pasa con algunos archivos y una sola vez; no hay lectura que no lo marque ni forma de limpiarlo (`doc.Dirty = False` da `0x80020009` con scode E_FAIL aunque la propiedad tenga setter; solo `doc.Save()` lo limpia y reescribe el archivo, así que no se restaura). Se informa en `modificado_por_lectura`. `se export` a PDF (Draft) y a PNG también deja `Dirty = true` sin cambiar el archivo (verificado 2026-11-26); cerrar con `--discard` no pierde nada |
 | `--overwrite` sobre un archivo en uso | **resuelto**: exit 6 con el original intacto (antes, exit 1 con el `PermissionError` crudo) |
 | `docs new --template` y `draft from-part --template` | **resuelto**: daban siempre exit 4; ahora usan `Documents.Add(ProgID, plantilla)` |
 | hresult de "ocupado" (exit 7) | **no reproducible**: Solid Edge no rechaza llamadas (atiende o encola) |
 | un modal deja al comando esperando | **resuelto con `--timeout`** (opcional; sin él, la CLI espera sin límite): exit 7 al vencer el plazo, sin cerrar Solid Edge. Límites: una llamada única más larga que el plazo se corta; `se run` no tiene plazo (ver "Timeout") |
 | `features suppress` en operaciones sincrónicas | **imposible** por la API (exit 6, ver `features suppress`) |
-| `sheetmetal flat-dxf` sin desarrollo | exit 5 salvo `--create`; un `--create` fallido deja un `FlatPatternModel` vacío que la API no borra |
+| `sheetmetal flat-dxf` sin desarrollo | exit 5 salvo `--create`; un `--create` fallido deshace con un `Undo` el `FlatPatternModel` vacío que creó (`desarrollo_vacio_limpiado`) |
 | bridas y agujeros en chapa doblada | `sheetmetal tab` solo crea la base y no acepta una cara existente. Sin comando de brida: probado con `se run --allow-scripts` y `Flanges.AddSync` sobre una base creada en modo sincrónico. Después, en modo ordenado, `hole --plane front --direction reverse --through` perforó el tramo vertical. El DXF incluyó ambos agujeros y una línea de pliegue en `DOWN_CENTERLINES` |
 | `mass` sin densidad tras recalcular y guardar | **causa: la pieza no tiene material.** Sin material, `Model.GetPhysicalProperties` devuelve estado 2 y ceros tras `mass --density 7850` y `docs save` (también al reabrir); con un material aplicado (`MaterialTable.ApplyMaterialToDoc`) devuelve estado 1 sin guardar. Se asigna con `se material set` (desde el 2026-11-25). La CLI lo explica (ver "Propiedades físicas") |
-| vistas sobre el rótulo | el layout reserva 30 mm abajo y el rótulo ISO mide 50,8 mm: con escalas grandes una vista puede pisarlo |
-| marca de agua de Community Edition | en el PDF, no se puede quitar (DXF y PNG no la traen) |
+| vistas sobre el rótulo | **resuelto** (2026-11-26): el área útil excluye el marco y toda la franja del rótulo de cada tamaño (60,8 mm en A5-A2, 77,1 mm en A1-A0) más 5 mm; `auto` elige la mayor escala ISO 5455 que entra y una `--scale` que no entra se respeta con una `advertencia` |
+| marca de agua de Community Edition | **limitación inherente a Community Edition** (verificada 2026-11-26 en A3 y A4): en el PDF, gris claro abajo a la izquierda dentro del marco, en cada página exportada; no se puede quitar. DXF y PNG no la traen |
 
 **Cierres solos de Solid Edge (23 y 24/11):** no hubo crash: no hay eventos de error de `Edge.exe`
 ni volcados. Los del 24/11 a las 00:11 y a las 02:41 coinciden al segundo con apagados o reinicios
@@ -1274,7 +1326,9 @@ claude plugin marketplace add valentinogambino/solidedge-cli
 claude plugin install solidedge-cli@solidedge-cli
 ```
 
-El plugin no fija `version`, así que Claude Code lo identifica por el commit del repo.
+El plugin fija `version` en `.claude-plugin/plugin.json` y en su entrada de `marketplace.json`, igual
+a la de `pyproject.toml` (un test exige que coincidan): Claude Code ofrece la actualización cuando
+sube la versión. El ícono del plugin es opcional y queda pendiente.
 
 Alternativa manual: copiá la carpeta `skills/solidedge-cli/` a `~/.claude/skills/` (para todos tus
 proyectos) o a `.claude/skills/` de un proyecto. Hace falta el nombre de carpeta `solidedge-cli`.

@@ -222,6 +222,76 @@ def test_pdf_y_dxf_solo_de_draft(cli, app_falsa, tmp_path, nombre, tipo, formato
     assert app_falsa.escrituras == []
 
 
+def _acceso_denegado():
+    """Lo que dio Solid Edge en vivo: `DISP_E_EXCEPTION` con scode E_ACCESSDENIED."""
+    return ComErrorFalso(
+        0x80020009, "Exception occurred.", (0, None, None, None, 0, 0x80070005 - 2**32)
+    )
+
+
+def test_dxf_de_draft_reintenta_una_vez_si_falla_con_acceso_denegado(cli, app_falsa, tmp_path):
+    doc = _doc(app_falsa, tmp_path, "Plano.dft", tipo=2)
+    doc.fallar("SaveCopyAs", _acceso_denegado())
+
+    r, sobre = cli("export", "--format", "dxf")
+
+    assert r.exit_code == 0, r.output
+    salida = tmp_path / "Plano.dxf"
+    assert len(_copias(app_falsa)) == 2 and salida.read_bytes() == b"exportado"
+    assert sobre["data"]["reintento"] is True and sobre["data"]["bytes"] == 9
+
+
+def test_dxf_sin_fallo_no_informa_reintento(cli, app_falsa, tmp_path):
+    _doc(app_falsa, tmp_path, "Plano.dft", tipo=2)
+    r, sobre = cli("export", "--format", "dxf")
+    assert r.exit_code == 0 and "reintento" not in sobre["data"]
+    assert len(_copias(app_falsa)) == 1
+
+
+def test_dxf_con_acceso_denegado_persistente_es_exit_6_y_no_deja_archivo(cli, app_falsa, tmp_path):
+    doc = _doc(app_falsa, tmp_path, "Plano.dft", tipo=2)
+    salida = tmp_path / "Plano.dxf"
+    original = doc.SaveCopyAs
+
+    def a_medias(ruta):
+        salida.write_bytes(b"parcial")
+        original(ruta)
+
+    doc.SaveCopyAs = a_medias
+    doc.fallar("SaveCopyAs", _acceso_denegado(), _acceso_denegado())
+
+    r, sobre = cli("export", "--format", "dxf")
+
+    error = sobre["error"]
+    assert r.exit_code == 6 and error["code"] == "no_soportado"
+    assert error["hresult"] == "0x80020009"
+    assert error["details"]["causa"] == "acceso_denegado"
+    assert error["details"]["scode"] == "0x80070005" and error["details"]["reintentos"] == 1
+    assert (
+        "rechazó la escritura" in error["message"] and "reintentar el comando" in error["message"]
+    )
+    assert len(_copias(app_falsa)) == 2
+    assert not salida.exists()
+
+
+def test_dxf_con_otro_error_no_reintenta(cli, app_falsa, tmp_path):
+    doc = _doc(app_falsa, tmp_path, "Plano.dft", tipo=2)
+    doc.fallar("SaveCopyAs", _dce_sin_detalles())
+
+    r, _ = cli("export", "--format", "dxf")
+
+    assert r.exit_code == 4 and len(_copias(app_falsa)) == 1
+
+
+def test_dxf_de_draft_si_el_reintento_falla_distinto_no_se_reclasifica(cli, app_falsa, tmp_path):
+    doc = _doc(app_falsa, tmp_path, "Plano.dft", tipo=2)
+    doc.fallar("SaveCopyAs", _acceso_denegado(), _dce_sin_detalles())
+
+    r, sobre = cli("export", "--format", "dxf")
+
+    assert r.exit_code == 4 and "causa" not in (sobre["error"].get("details") or {})
+
+
 @pytest.mark.parametrize(
     ("nombre", "tipo", "tamano"),
     [
@@ -257,6 +327,23 @@ def test_png_activa_el_documento_y_restaura_el_activo(cli, app_falsa, tmp_path):
     activaciones = [c[1] for c in app_falsa.registro if c[0] == "Activate"]
     assert activaciones == ["A.par", "B.par"]
     assert app_falsa.ActiveDocument.Name == "B.par"
+
+
+@pytest.mark.parametrize("formato", ["pdf", "dxf"])
+def test_pdf_y_dxf_de_un_draft_no_activo_lo_activan_y_restauran_el_activo(
+    cli, app_falsa, tmp_path, formato
+):
+    # Con otro Draft activo, SaveCopyAs exporta el contenido del activo: hay que activar el pedido.
+    _doc(app_falsa, tmp_path, "A.dft", tipo=2)
+    _doc(app_falsa, tmp_path, "B.dft", tipo=2)  # queda activo
+
+    r, _ = cli("export", "--format", formato, "--doc", "A.dft")
+
+    assert r.exit_code == 0
+    activaciones = [c[1] for c in app_falsa.registro if c[0] == "Activate"]
+    assert activaciones == ["A.dft", "B.dft"]
+    assert _copias(app_falsa) == [("SaveCopyAs", "A.dft", str(tmp_path / f"A.{formato}"))]
+    assert app_falsa.ActiveDocument.Name == "B.dft"
 
 
 def test_png_sin_contenido_es_error(cli, app_falsa, tmp_path):

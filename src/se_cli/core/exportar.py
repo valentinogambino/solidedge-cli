@@ -22,7 +22,15 @@ from typing import Any
 
 from se_cli.core import acceso, documentos
 from se_cli.core.acceso import leer, opcional
-from se_cli.core.errors import ArgumentoInvalido, ErrorCom, NoSoportado, SeError, traducir
+from se_cli.core.errors import (
+    ArgumentoInvalido,
+    ErrorCom,
+    NoSoportado,
+    SeError,
+    formatear_hresult,
+    scode_de,
+    traducir,
+)
 
 TIPOS_SOLIDOS = ("part", "sheetmetal", "assembly")
 TIPOS_DRAFT = ("draft",)
@@ -77,9 +85,58 @@ def _exportar_pdf(doc: Any, ruta: str) -> None:
     leer(lambda: doc.SaveCopyAs(ruta))
 
 
-def _exportar_dxf(doc: Any, ruta: str) -> None:
-    """DXF de un Draft: `SaveCopyAs` con extensión `.dxf`."""
-    leer(lambda: doc.SaveCopyAs(ruta))
+E_ACCESSDENIED = 0x80070005
+
+
+def _acceso_denegado(error: Exception) -> bool:
+    """Si es un `com_error` cuyo scode (el error real tras `DISP_E_EXCEPTION`) es E_ACCESSDENIED."""
+    return scode_de(error) == E_ACCESSDENIED or getattr(error, "hresult", 0) & 0xFFFFFFFF == (
+        E_ACCESSDENIED
+    )
+
+
+def _exportar_dxf(doc: Any, ruta: str) -> dict[str, Any] | None:
+    """DXF de un Draft: `SaveCopyAs` con extensión `.dxf`.
+
+    Verificado en vivo (2026-11-26): funciona, pero la primera exportación DXF de una sesión de
+    Solid Edge falló una vez con un modal "This is a read-only file. Choose another name." y
+    `0x80020009` con scode E_ACCESSDENIED, sin causa determinada y sin repetirse. Con ese error se
+    reintenta una vez; si persiste, exit 6 (`causa: acceso_denegado`). Devuelve `{"reintento":
+    True}` si hizo falta reintentar.
+    """
+    try:
+        leer(lambda: doc.SaveCopyAs(ruta))
+        return None
+    except Exception as error:
+        if not _acceso_denegado(error):
+            raise
+        primero = error
+    # Un intento a medias no puede quedar: Solid Edge no debe encontrar un archivo en la ruta.
+    with contextlib.suppress(OSError):
+        os.remove(ruta)
+    try:
+        leer(lambda: doc.SaveCopyAs(ruta))
+    except Exception as error:
+        if not _acceso_denegado(error):
+            raise
+        with contextlib.suppress(OSError):
+            os.remove(ruta)
+        traducido = traducir(error)
+        raise NoSoportado(
+            "Solid Edge rechazó la escritura del DXF (acceso denegado, E_ACCESSDENIED) también "
+            "al reintentar. Es un fallo intermitente de Solid Edge: reintentar el comando suele "
+            "funcionar.",
+            hresult=traducido.hresult,
+            details={
+                **(traducido.details or {}),
+                "causa": "acceso_denegado",
+                "scode": formatear_hresult(E_ACCESSDENIED),
+                "ruta": ruta,
+                "formato": "dxf",
+                "reintentos": 1,
+            },
+        ) from primero
+    return {"reintento": True}
 
 
 def _tamano_png(doc: Any) -> tuple[int, int]:
@@ -124,7 +181,7 @@ class Formato:
     extension: str
     extensiones: tuple[str, ...]
     tipos: tuple[str, ...]
-    exportar: Callable[[Any, str], None]
+    exportar: Callable[[Any, str], dict[str, Any] | None]
     # La exportación sale de la vista de la ventana: el documento tiene que estar activo.
     requiere_ventana: bool = False
     marca_de_agua: bool = False
@@ -135,8 +192,27 @@ FORMATOS: dict[str, Formato] = {
     "stl": Formato("stl", ".stl", (".stl",), TIPOS_SOLIDOS, _exportar_stl),
     "x_t": Formato("x_t", ".x_t", (".x_t",), TIPOS_SOLIDOS, _exportar_x_t),
     "igs": Formato("igs", ".igs", (".igs", ".iges"), TIPOS_SOLIDOS, _exportar_igs),
-    "pdf": Formato("pdf", ".pdf", (".pdf",), TIPOS_DRAFT, _exportar_pdf, marca_de_agua=True),
-    "dxf": Formato("dxf", ".dxf", (".dxf",), TIPOS_DRAFT, _exportar_dxf, marca_de_agua=True),
+    # El PDF y el DXF de un Draft también salen de la ventana: con otro documento activo,
+    # `SaveCopyAs` exporta el contenido del activo en la hoja del pedido (verificado en vivo,
+    # 2026-11-26: el PDF de un A3 trajo el rótulo y las vistas del A4 activo).
+    "pdf": Formato(
+        "pdf",
+        ".pdf",
+        (".pdf",),
+        TIPOS_DRAFT,
+        _exportar_pdf,
+        requiere_ventana=True,
+        marca_de_agua=True,
+    ),
+    "dxf": Formato(
+        "dxf",
+        ".dxf",
+        (".dxf",),
+        TIPOS_DRAFT,
+        _exportar_dxf,
+        requiere_ventana=True,
+        marca_de_agua=True,
+    ),
     "png": Formato(
         "png", ".png", (".png",), TIPOS_CON_VENTANA, _exportar_png, requiere_ventana=True
     ),
@@ -289,18 +365,22 @@ def escribir(
     ruta: str,
     sobrescribir: bool,
     verificar: Callable[[str], None] | None = None,
+    extras: dict[str, Any] | None = None,
 ) -> int:
     """Exportá `doc` a `ruta` y devolvé los bytes escritos.
 
     Nunca le pasa a Solid Edge una ruta que existe: con `sobrescribir` aparta el archivo previo y
     lo restaura si la exportación falla o no deja un archivo con contenido. Sin `sobrescribir` y
     con el destino ocupado da exit 6. `verificar(ruta)` corre sobre el archivo escrito (si
-    levanta, se lo deshace igual que a un archivo vacío).
+    levanta, se lo deshace igual que a un archivo vacío). Si el exportador informa algo más (por
+    ejemplo `reintento`), se vuelca en `extras`.
     """
     documentos.exigir_ruta_corta(ruta)
     with documentos.respaldo(ruta, sobrescribir, limpiar_destino=True):
         try:
-            formato.exportar(doc, ruta)
+            adicional = formato.exportar(doc, ruta)
+            if adicional and extras is not None:
+                extras.update(adicional)
         except Exception as error:
             explicado = explicar_fallo(doc, formato, ruta, error)
             if explicado is None:
@@ -347,8 +427,9 @@ def exportar_individual(
     exigir_compatible(formato, tipo, nombre)
     origen = documentos.ruta_de(doc)
     salida = documentos.validar_destino(salida_individual(formato, origen, out), sobrescribir)
+    extras: dict[str, Any] = {}
     with ventana_activa(app, doc, formato):
-        tamano = escribir(doc, formato, salida, sobrescribir)
+        tamano = escribir(doc, formato, salida, sobrescribir, extras=extras)
     return {
         "entrada": origen or nombre,
         "documento": nombre,
@@ -359,6 +440,7 @@ def exportar_individual(
         "bytes": tamano,
         "duracion_s": round(time.perf_counter() - inicio, 3),
         **extras_de(formato),
+        **extras,
     }
 
 

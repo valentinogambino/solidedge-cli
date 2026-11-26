@@ -8,6 +8,7 @@
     {
       "name": "solidedge-cli",
       "source": "./",
+      "version": "0.1.0",
       "description": "Skill para operar Solid Edge desde la terminal con la CLI se: piezas, ensambles, planos, chapa y exportación."
     }
   ]

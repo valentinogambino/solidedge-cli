@@ -12,6 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 from se_cli.cli import app
+from se_cli.core import vistas
 
 MEDIR = textwrap.dedent(
     """
@@ -31,12 +32,18 @@ MEDIR = textwrap.dedent(
             a, b = lineas.Item(i).GetStartPoint(), lineas.Item(i).GetEndPoint()
             lx += [a[0], b[0]]
             ly += [a[1], b[1]]
+        horizontales = []
+        for i in range(1, lineas.Count + 1):
+            a, b = lineas.Item(i).GetStartPoint(), lineas.Item(i).GetEndPoint()
+            if abs(a[1] - b[1]) < 1e-6 and a[1] < alto / 2:
+                horizontales.append(a[1])
         cajas = fondo.TextBoxes
         for i in range(1, cajas.Count + 1):
             textos.append(str(cajas.Item(i).Text))
         return {"fondo": fondo.Name, "ancho": ancho, "alto": alto, "objetos": objetos.Count,
                 "x": [min(xs), max(xs)], "y": [min(ys), max(ys)],
-                "marco_x": [min(lx), max(lx)], "marco_y": [min(ly), max(ly)], "textos": textos}
+                "marco_x": [min(lx), max(lx)], "marco_y": [min(ly), max(ly)], "textos": textos,
+                "rotulo_tope": max(horizontales)}
     """
 )
 
@@ -105,6 +112,10 @@ def test_hoja_con_marco_y_rotulo_dentro(caja, hoja):
         assert 0 <= m["x"][0] * 1000 and m["x"][1] * 1000 <= ancho
         assert 0 <= m["y"][0] * 1000 and m["y"][1] * 1000 <= alto
         assert hoja in [t.strip() for t in m["textos"]]
+        # El tope del rótulo es la medida con la que `vistas` arma el área útil.
+        marco_vistas, tope_vistas = vistas.MEDIDAS_DE_HOJA[hoja]
+        assert marco_vistas * 1000 == pytest.approx(margen)
+        assert m["rotulo_tope"] == pytest.approx(tope_vistas, abs=0.0002)
 
         pdf = destino.with_suffix(".pdf").read_bytes()
         caja_pdf = [float(v) for v in re.search(rb"/MediaBox\s*\[([^\]]*)\]", pdf).group(1).split()]

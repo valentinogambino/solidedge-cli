@@ -171,7 +171,7 @@ def _exportar_item(
             abierto_por_el_lote = True
         exigir_compatible(formato, acceso.tipo_de(doc), os.path.basename(item.entrada))
         with ventana_activa(app, doc, formato):
-            resultado["bytes"] = escribir(doc, formato, item.salida, sobrescribir)
+            resultado["bytes"] = escribir(doc, formato, item.salida, sobrescribir, extras=resultado)
         resultado["ok"] = True
     except TiempoAgotado as error:
         resultado.update(ok=False, error={**error.a_dict(), "details": error.details.copy()})

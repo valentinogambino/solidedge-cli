@@ -276,8 +276,8 @@ def crear(app: Any, plan: Plan, sobrescribir: bool, mantener_abierto: bool) -> d
     try:
         tipo = plan.tipo
         caja = None
+        doc_modelo = documentos.buscar_abierto(app, plan.modelo)
         if plan.factor is None:
-            doc_modelo = documentos.buscar_abierto(app, plan.modelo)
             if doc_modelo is None:
                 doc_modelo = leer(lambda: app.Documents.Open(plan.modelo))
                 modelo_abierto_por_mi = doc_modelo
@@ -288,14 +288,28 @@ def crear(app: Any, plan: Plan, sobrescribir: bool, mantener_abierto: bool) -> d
                     details={"tipo": tipo},
                 )
             caja = _caja_del_modelo(doc_modelo, tipo)
+        else:
+            # Con escala pedida el modelo se mide igual, solo para avisar si no entra: un fallo
+            # al abrirlo o medirlo no corta el plano (sin caja no hay aviso).
+            try:
+                if doc_modelo is None:
+                    doc_modelo = leer(lambda: app.Documents.Open(plan.modelo))
+                    modelo_abierto_por_mi = doc_modelo
+                caja = _caja_del_modelo(doc_modelo, tipo)
+            except (Ocupado, NoConectado):
+                raise
+            except Exception:
+                caja = None
 
         draft = _nuevo_draft(app, plan.plantilla)
         info_hoja, tamano = _medida_de_hoja(draft, plan.hoja)
         distribucion = vistas.distribuir(tamano, plan.vistas)
+        advertencia = None
         if plan.factor is None:
             factor, auto = vistas.elegir_escala(caja, distribucion.celda, plan.vistas)
         else:
             factor, auto = plan.factor, None
+            advertencia = _advertir_si_no_entra(caja, distribucion, plan.vistas, factor)
 
         enlace = _enlazar(draft, plan.modelo)
         coleccion = _vistas_de_la_hoja(draft)
@@ -327,11 +341,21 @@ def crear(app: Any, plan: Plan, sobrescribir: bool, mantener_abierto: bool) -> d
             "modelo": plan.modelo,
             "hoja": info_hoja,
             "escala": vistas.nombre_de_escala(factor),
+            "escala_origen": "automatica" if plan.factor is None else "explicita",
+            "area_util": dict(
+                zip(
+                    ("x_min", "y_min", "x_max", "y_max"),
+                    map(_redondear, distribucion.area_util),
+                    strict=True,
+                )
+            ),
             "vistas": colocadas,
             "abierto": mantener_abierto,
         }
         if auto is not None:
             resultado["escala_auto"] = auto
+        if advertencia is not None:
+            resultado.update(advertencia)
         if plan.pdf is not None:
             formato = exportar.FORMATOS["pdf"]
             resultado["pdf"] = plan.pdf
@@ -355,6 +379,35 @@ def crear(app: Any, plan: Plan, sobrescribir: bool, mantener_abierto: bool) -> d
                 actual = documentos.documento_activo(app)
                 if actual is None or actual is not activo_previo:
                     leer(activo_previo.Activate)
+
+
+def _redondear(metros: float) -> float:
+    return round(metros, 6)
+
+
+def _advertir_si_no_entra(
+    caja: tuple[float, float, float] | None,
+    distribucion: vistas.Distribucion,
+    nombres: list[str],
+    factor: float,
+) -> dict[str, Any] | None:
+    """Advertencia (con la escala máxima que entra) si la `--scale` pedida no entra en el área útil.
+
+    La escala pedida se respeta igual. Una vista que no entra en su celda puede pisar el rótulo, el
+    marco u otra vista. Sin caja del modelo no hay forma de saberlo y no se advierte.
+    """
+    if caja is None or vistas.entran(caja, distribucion.celda, nombres, factor):
+        return None
+    maxima, _ = vistas.elegir_escala(caja, distribucion.celda, nombres)
+    nombre = vistas.nombre_de_escala(maxima)
+    return {
+        "advertencia": (
+            f"La escala {vistas.nombre_de_escala(factor)} no entra en el área útil de la hoja "
+            "(dentro del marco y sobre el cuadro de rotulación): alguna vista puede pisar el "
+            f"rótulo o a otra vista. La escala máxima que entra es {nombre} (o usá --scale auto)."
+        ),
+        "escala_maxima": nombre,
+    }
 
 
 def _guardar_draft(draft: Any, destino: str, sobrescribir: bool) -> None:

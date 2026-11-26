@@ -113,6 +113,7 @@ ESCRITURAS = frozenset(
         "Quit",
         "Visible=",
         "Dirty=",
+        "Undo",
         "Activate",
         "Variables.Add",
         "Variable.Value=",
@@ -233,6 +234,14 @@ class DocumentoFalso(_ConFallos):
                 archivo.write(b"exportado")
         elif self.modo_exportacion == "vacio":
             open(ruta, "wb").close()
+
+    def Undo(self) -> None:
+        """Deshace la última operación registrada en `deshacer` (hoy: `FlatPatternModels.Add`)."""
+        self.registro.append(("Undo", self.Name))
+        self._tocar("Undo")
+        pila = getattr(self, "deshacer", [])
+        if pila:
+            pila.pop()()
 
     def Close(self, guardar: bool = False) -> None:
         self.registro.append(("Close", self.Name, guardar))
@@ -2014,6 +2023,9 @@ class DesarrollosFalsos(ColeccionFalsa):
         self.doc._tocar("FlatPatternModels.Add")
         desarrollo = DesarrolloFalso(self.doc)
         self.elementos.append(desarrollo)
+        if getattr(self.doc, "undo_deshace_el_desarrollo", True):
+            quitar = lambda: self.elementos.remove(desarrollo)  # noqa: E731
+            self.doc.deshacer = [*getattr(self.doc, "deshacer", []), quitar]
         return desarrollo
 
 
