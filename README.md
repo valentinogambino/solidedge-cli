@@ -758,6 +758,12 @@ sin tocar Solid Edge ni el disco. Corren con `DisplayAlerts` apagado (se restaur
 Edition 226.00.01.04 (ver la tabla de supuestos al final). Cada llamada a Solid Edge está aislada
 en una función pequeña de `src/se_cli/core/`.
 
+**Documento activo en PDF y DXF:** como el PNG, el PDF y el DXF de un Draft salen de la ventana: con
+otro documento activo, `SaveCopyAs` exporta el contenido del activo en una hoja del tamaño del
+pedido (verificado en vivo el 2026-11-26: el PDF de un A3 trajo el rótulo y las vistas del A4
+activo). Por eso `se export --doc <draft>` lo activa mientras exporta y devuelve la activación al
+documento que estaba activo.
+
 **Marca de agua (limitación inherente a Community Edition, verificada mirando los archivos el
 2026-11-26 y el 2026-11-23):** el **PDF** lleva la leyenda "Solid Edge Community Edition" en gris muy
 claro, abajo a la izquierda de la hoja: dentro del marco, a la izquierda del
@@ -1320,7 +1326,9 @@ claude plugin marketplace add valentinogambino/solidedge-cli
 claude plugin install solidedge-cli@solidedge-cli
 ```
 
-El plugin no fija `version`, así que Claude Code lo identifica por el commit del repo.
+El plugin fija `version` en `.claude-plugin/plugin.json` y en su entrada de `marketplace.json`, igual
+a la de `pyproject.toml` (un test exige que coincidan): Claude Code ofrece la actualización cuando
+sube la versión. El ícono del plugin es opcional y queda pendiente.
 
 Alternativa manual: copiá la carpeta `skills/solidedge-cli/` a `~/.claude/skills/` (para todos tus
 proyectos) o a `.claude/skills/` de un proyecto. Hace falta el nombre de carpeta `solidedge-cli`.

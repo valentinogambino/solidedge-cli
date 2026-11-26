@@ -3,6 +3,7 @@
 import json
 import re
 import shlex
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,15 @@ def test_manifiestos_parsean_y_tienen_los_campos_obligatorios():
     assert marketplace["name"]
     assert marketplace["owner"]["name"]
     assert marketplace["plugins"]
+
+
+def test_version_del_plugin_coincide_con_la_de_pyproject():
+    version = tomllib.loads((RAIZ / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "version"
+    ]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version)
+    assert _json(PLUGIN_JSON)["version"] == version
+    assert _json(MARKETPLACE_JSON)["plugins"][0]["version"] == version
 
 
 def test_nombre_del_plugin_coincide_y_es_kebab_case():
