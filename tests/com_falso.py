@@ -210,16 +210,6 @@ class DocumentoFalso(_ConFallos):
         self._sucio = False
         self._consolidar_fisicas()
 
-    def Undo(self) -> None:
-        """Deshace la última operación creada por la API (la brida sin efecto)."""
-        self.registro.append(("Undo", self.Name))
-        self._tocar("Undo")
-        operacion = getattr(self, "ultima_a_deshacer", None)
-        if operacion is not None:
-            operacion.coleccion.elementos.remove(operacion)
-            operacion.coleccion.modelo.Features.elementos.remove(operacion)
-            self.ultima_a_deshacer = None
-
     def contenido_dxf(self) -> bytes:
         """DXF que da `SaveAsFlatDXFEx`: vacio en la sesion donde se creo el desarrollo."""
         if getattr(self, "desarrollo_de_esta_sesion", False):
@@ -252,6 +242,11 @@ class DocumentoFalso(_ConFallos):
         pila = getattr(self, "deshacer", [])
         if pila:
             pila.pop()()
+        operacion = getattr(self, "ultima_a_deshacer", None)
+        if operacion is not None:
+            operacion.coleccion.elementos.remove(operacion)
+            operacion.coleccion.modelo.Features.elementos.remove(operacion)
+            self.ultima_a_deshacer = None
 
     def Close(self, guardar: bool = False) -> None:
         self.registro.append(("Close", self.Name, guardar))
