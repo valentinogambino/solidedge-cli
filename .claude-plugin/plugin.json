@@ -1,0 +1,11 @@
+{
+  "name": "solidedge-cli",
+  "description": "Skill para operar Solid Edge desde la terminal con la CLI se: piezas, ensambles, planos, chapa y exportación.",
+  "author": {
+    "name": "Valentino Gambino"
+  },
+  "homepage": "https://github.com/valentinogambino/solidedge-cli",
+  "repository": "https://github.com/valentinogambino/solidedge-cli",
+  "license": "MIT",
+  "keywords": ["solid-edge", "cad", "cli", "com", "windows"]
+}
