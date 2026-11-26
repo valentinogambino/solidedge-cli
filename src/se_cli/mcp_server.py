@@ -25,6 +25,7 @@ from se_cli.core import (
     ensamble,
     exportar,
     fisica,
+    materiales,
     modelado,
     operaciones,
     result,
@@ -240,6 +241,29 @@ def mass(
                 sin_alertas=valor is not None,
             )
         )
+    return sobre
+
+
+@mcp.tool()
+def material(
+    name: str | None = None,
+    library: str | None = None,
+    doc: Doc = None,
+    timeout: Timeout = None,
+) -> Sobre:
+    """Leé el material de una pieza o chapa; con name, asignalo (modifica, no guarda)."""
+    with _respuesta() as (sobre, completar):
+        if name is None:
+            completar(_llamar(lambda app: materiales.obtener(app, doc), timeout))
+        else:
+            nombre = materiales.validar_nombre(name)
+            completar(
+                _llamar(
+                    lambda app: materiales.asignar(app, doc, nombre, library),
+                    timeout,
+                    sin_alertas=True,
+                )
+            )
     return sobre
 
 

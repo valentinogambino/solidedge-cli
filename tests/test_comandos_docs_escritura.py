@@ -388,7 +388,7 @@ def test_modo_humano_de_error_va_a_stderr(cli, app_falsa):
 def test_save_as_con_overwrite_y_timeout_conserva_el_apartado(
     cli, app_falsa, sta, monkeypatch, tmp_path
 ):
-    doc = app_falsa.agregar_documento("A.par", ruta="C:\p\A.par")
+    doc = app_falsa.agregar_documento("A.par", ruta="C:\\p\\A.par")
     doc.bloqueo.bloquear("SaveAs")
     monkeypatch.setattr(sta, "_cancelar", lambda _: doc.bloqueo.cancelar())
     destino = tmp_path / "Existe.par"
@@ -415,3 +415,20 @@ def test_save_as_con_ruta_de_260_caracteres_es_exit_2_sin_tocar_com(cli, app_fal
     assert "260" in sobre["error"]["message"]
     assert sobre["error"]["details"]["largo"] == 260
     assert app_falsa.escrituras == []
+
+
+def test_new_con_timeout_avisa_que_el_documento_pudo_crearse(cli, app_falsa, monkeypatch):
+    from se_cli.core import documentos
+    from se_cli.core.errors import TiempoAgotado
+
+    def lento(*_):
+        raise TiempoAgotado(5, 5.2)
+
+    monkeypatch.setattr(documentos, "nuevo", lento)
+
+    r, sobre = cli("--timeout", "5", "docs", "new", "part")
+
+    assert r.exit_code == 7 and sobre["error"]["code"] == "ocupado"
+    assert sobre["error"]["details"]["documento_pudo_crearse"] is True
+    assert sobre["error"]["details"]["motivo"] == "timeout"
+    assert "se docs list" in sobre["error"]["message"]

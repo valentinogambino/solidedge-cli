@@ -226,8 +226,9 @@ def _sin_propiedades_guardadas(app: Any, doc: Any) -> ArgumentoInvalido:
         detalles["causa"] = "sin_material"
         return ArgumentoInvalido(
             "La pieza no tiene material asignado: Solid Edge no guarda masa ni densidad sin "
-            "material (estado 2), y guardar el documento no lo cambia. Asignale un material en "
-            "Solid Edge o pasá --density <kg/m3> para calcular con una densidad explícita.",
+            "material (estado 2), y guardar el documento no lo cambia. Asignale un material con "
+            "`se material set <nombre>` o pasá --density <kg/m3> para calcular con una "
+            "densidad explícita.",
             details=detalles,
         )
     return ArgumentoInvalido(
@@ -329,7 +330,8 @@ def propiedades(
             data["advertencia"] = (
                 "La pieza no tiene material asignado: la masa se calculó con la densidad "
                 "indicada, pero Solid Edge no la guarda en el documento (sin material, `mass` sin "
-                "--density da estado 2). Asignale un material para que quede."
+                "--density da estado 2). Asignale uno con `se material set <nombre>` para que "
+                "quede."
             )
     if tipo == "assembly" and app is not None:
         sin_material = piezas_sin_material(app, doc)

@@ -48,6 +48,7 @@ def test_registro_de_herramientas():
         "vars_get",
         "vars_set",
         "mass",
+        "material",
         "export",
         "features_list",
         "sketch_profile",

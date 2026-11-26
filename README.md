@@ -234,7 +234,7 @@ recalculados en el momento. **El estado depende del material** (verificado en vi
 es 1 apenas el documento tiene un material asignado (aun sin guardar) y 2 mientras no lo tenga, aunque
 se haya calculado con `--density` y guardado. Por eso una pieza sin material da exit 2 con
 `error.details` `{"estado_solid_edge": 2, "causa": "sin_material"}` y un mensaje que pide asignar un
-material o pasar `--density`; con `--density` el cálculo sale bien y suma `data.advertencia` (los demás
+material (`se material set`) o pasar `--density`; con `--density` el cálculo sale bien y suma `data.advertencia` (los demás
 campos no cambian). Si hay material y aun así llega el estado 2, el mensaje no culpa al material.
 `GetUserPhysicalProperties` solo devuelve valores cargados a mano. En un **ensamble** no existe cálculo con densidad (`--density` da exit
 6, `no_soportado`): la masa sale de los materiales de las piezas con
@@ -243,6 +243,25 @@ entonces `actualizado: true`); una pieza sin material cuenta con densidad 1 kg/m
 archivo con su cantidad, y `data.advertencia` avisa; la masa y el exit code no cambian) y el
 ensamble no informa el área (`area: null`). Verificado: cubo de 50 mm a 7850 kg/m3 da volumen 1.25e-4 m3, área
 0.015 m2 y masa 0.98125 kg.
+
+### Material
+
+```powershell
+se --json material list [--library Materials-DIN]
+# {"ok": true, "data": {"bibliotecas": [{"biblioteca": "Materials", "materiales": ["Stainless steel", "...", "Steel", "..."]}, ...]}, "error": null}
+se --json material get
+# {"ok": true, "data": {"material": null}, "error": null}
+se --json material set steel [--library Materials]
+# {"ok": true, "data": {"material": "Steel", "biblioteca": "Materials", "anterior": null, "guardado": false}, "error": null}
+```
+Solo pieza y chapa (otro tipo da exit 2). `set` busca el nombre en las bibliotecas sin distinguir
+mayúsculas y lo asigna con la grafía de Solid Edge (`MaterialTable.ApplyMaterialToDoc`), densidad
+incluida; no guarda el documento. Un nombre que no está da exit 5 (con `details.parecidos` si hay
+nombres que lo contienen), igual que una `--library` que no existe. Es una escritura: lo bloquea
+`--readonly` y `--dry-run` solo informa. Con material, `se mass` sin `--density` deja de dar estado
+2. Verificado en vivo el 2026-11-25: prisma de 100 × 50 × 10 mm con `Steel` (7833 kg/m3) da
+0.39165 kg sin `--density`. En el MCP es la herramienta `material` (sin `name` lee; con `name`
+asigna).
 
 ### Ensambles y operaciones
 
@@ -1090,7 +1109,7 @@ están en la sección de cada comando.
 | `features suppress` en operaciones sincrónicas | **imposible** por la API (exit 6, ver `features suppress`) |
 | `sheetmetal flat-dxf` sin desarrollo | exit 5 salvo `--create`; un `--create` fallido deja un `FlatPatternModel` vacío que la API no borra |
 | bridas y agujeros en chapa doblada | `sheetmetal tab` solo crea la base y no acepta una cara existente. Sin comando de brida: probado con `se run --allow-scripts` y `Flanges.AddSync` sobre una base creada en modo sincrónico. Después, en modo ordenado, `hole --plane front --direction reverse --through` perforó el tramo vertical. El DXF incluyó ambos agujeros y una línea de pliegue en `DOWN_CENTERLINES` |
-| `mass` sin densidad tras recalcular y guardar | **causa: la pieza no tiene material.** Sin material, `Model.GetPhysicalProperties` devuelve estado 2 y ceros tras `mass --density 7850` y `docs save` (también al reabrir); con un material aplicado (`MaterialTable.ApplyMaterialToDoc`) devuelve estado 1 sin guardar. `se` no tiene comando para asignar material: se hace en Solid Edge. La CLI lo explica (ver "Propiedades físicas") |
+| `mass` sin densidad tras recalcular y guardar | **causa: la pieza no tiene material.** Sin material, `Model.GetPhysicalProperties` devuelve estado 2 y ceros tras `mass --density 7850` y `docs save` (también al reabrir); con un material aplicado (`MaterialTable.ApplyMaterialToDoc`) devuelve estado 1 sin guardar. Se asigna con `se material set` (desde el 2026-11-25). La CLI lo explica (ver "Propiedades físicas") |
 | vistas sobre el rótulo | el layout reserva 30 mm abajo y el rótulo ISO mide 50,8 mm: con escalas grandes una vista puede pisarlo |
 | marca de agua de Community Edition | en el PDF, no se puede quitar (DXF y PNG no la traen) |
 
@@ -1198,7 +1217,8 @@ Con `--timeout 5` funciona en esta máquina, pero con poco margen.
 **Documento huérfano:** `Documents.Add` no se puede cancelar a la mitad. Con `--timeout 1`,
 `se docs new part` salió con exit 7 (`cancelacion: "cancelada"`, `esperado_s: 1.8`): `CoCancelCall`
 recién volvió cuando Solid Edge terminó de crear el documento, y el documento quedó abierto. Un
-timeout en `docs new` no quiere decir que no se creó nada: revisá con `se docs list` y cerrá el
+timeout en `docs new` no quiere decir que no se creó nada (`error.details.documento_pudo_crearse: true`
+lo avisa, y el mensaje también): revisá con `se docs list` y cerrá el
 sobrante con `se docs close <nombre> --discard`.
 
 ## Forma de `--json`
@@ -1272,7 +1292,7 @@ usá `uv run --extra mcp se-mcp`.
 
 ### Herramientas
 
-El servidor expone 15 herramientas, todas sobre las mismas funciones de `src/se_cli/core/` que la
+El servidor expone 16 herramientas, todas sobre las mismas funciones de `src/se_cli/core/` que la
 CLI y con la misma respuesta `{ok, data, error}` (`error.code` igual al de la tabla de códigos de
 salida). Cada una valida sus argumentos contra su esquema (claves de más o tipos que no coinciden
 se rechazan antes de tocar Solid Edge).
@@ -1283,6 +1303,7 @@ se rechazan antes de tocar Solid Edge).
 | `docs_list`, `docs_open`, `docs_save` | `se docs list`, `se docs open`, `se docs save` |
 | `vars_get`, `vars_set` | `se vars get`, `se vars set` |
 | `mass` | `se mass` |
+| `material` | `se material get` y `se material set` (con `name`) |
 | `export` | `se export` (un documento; `step`, `stl`, `pdf` y `dxf`) |
 | `features_list` | `se features list` |
 | `sketch_profile` | `se sketch profile` |
