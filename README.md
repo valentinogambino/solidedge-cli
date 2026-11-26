@@ -383,11 +383,18 @@ entre cada paso; cerrado como imposible de evitar):
 | `DesignEdgebarFeatures` (el objeto) / `.Count` / `.Item(1).Name` | `false` / `true` / `true` |
 | `Body.Volume`, `Body.Faces(igQueryAll).Count`, `ProfileSets.Count`, `RefPlanes.Count`, `Variables.Count` | `false` |
 | `Model.Recompute()` | `true` |
-| `doc.Dirty = False` (o `0`) después | E_FAIL (0x80004005), sigue `true` |
+| `doc.Dirty = False` (o `0`) después | E_FAIL (0x80004005), sigue `true`; verificado de nuevo el 2026-11-26: `hr=0x80020009`, scode `0x80004005`, aunque la propiedad tenga setter |
 | `doc.Undo()` después | sin error, sigue `true` (y el modelo no cambia) |
 
 No hay una lista de operaciones que no pase por instanciarlas, así que la CLI no lo evita: lo
 informa. No marca limpio el documento ni deshace nada.
+
+Solo `doc.Save()` limpia `Dirty` (y reescribe el archivo), así que no hay forma de restaurar el
+estado limpio sin guardar. Pasa también con `se export` (verificado en vivo el 2026-11-26, en un
+documento reabierto desde disco, con `Dirty = false` antes): el PDF de un Draft (`SaveCopyAs`) y
+el PNG de cualquier tipo (el `View.Fit` que lo prepara) lo dejan en `true`, sin cambiar el archivo
+en disco (mismo tamaño, fecha y MD5). STEP, STL y DXF (`SaveCopyAs` sobre una pieza o un Draft
+limpios) no lo marcan. Como el archivo no cambió, cerrar con `--discard` no pierde nada.
 
 ```powershell
 se --json features suppress 2        # por índice (el de `features list`) o por nombre
@@ -751,11 +758,16 @@ sin tocar Solid Edge ni el disco. Corren con `DisplayAlerts` apagado (se restaur
 Edition 226.00.01.04 (ver la tabla de supuestos al final). Cada llamada a Solid Edge está aislada
 en una función pequeña de `src/se_cli/core/`.
 
-**Marca de agua (verificada mirando los archivos):** el **PDF** lleva la leyenda "Solid Edge
-Community Edition" en gris claro, abajo a la izquierda de cada hoja, dibujada con trazos (no es
-texto: buscar la cadena en el PDF no la encuentra). El **DXF** (de un Draft y del desarrollo de una
-chapa) no la trae, ni como texto ni como geometría; el PNG tampoco. Los resultados de `pdf` y `dxf`
-traen `"marca_de_agua": "presente"` o `"ausente"` y una `nota`.
+**Marca de agua (limitación inherente a Community Edition, verificada mirando los archivos el
+2026-11-26 y el 2026-11-23):** el **PDF** lleva la leyenda "Solid Edge Community Edition" en gris muy
+claro, abajo a la izquierda de la hoja: dentro del marco, a la izquierda del
+cuadro de rotulación y en la altura de su franja inferior (en A3 y A4, rasterizando el PDF con
+PyMuPDF y mirándolo). Va dibujada con trazos (no es texto: buscar la cadena en el PDF no la
+encuentra) y no se puede quitar. Un PDF de un Draft con dos hojas (`SHEET 1 OF 2`) salió con **una
+sola página**, la de la hoja 1 (que era la activa), también con la leyenda; no se probó qué exporta
+con otra hoja activa. El **DXF** (de un Draft y del desarrollo de una chapa)
+no la trae, ni como texto ni como geometría; el PNG tampoco. Los resultados de `pdf` y `dxf` traen
+`"marca_de_agua": "presente"` o `"ausente"` y una `nota`.
 
 ### Formatos y tipos de documento
 
@@ -1132,7 +1144,7 @@ están en la sección de cada comando.
 | tema | estado |
 |---|---|
 | `draft from-part --sheet A5` y `A0` sin fondo | **resuelto**: el fondo se genera desde el de la plantilla (ver "Fondo generado para A5 y A0") |
-| `features list` marca el documento como modificado | **imposible de evitar**: pasa con algunos archivos y una sola vez; no hay lectura que no lo marque ni forma de limpiarlo. Se informa en `modificado_por_lectura` |
+| `features list` marca el documento como modificado | **imposible de evitar**: pasa con algunos archivos y una sola vez; no hay lectura que no lo marque ni forma de limpiarlo (`doc.Dirty = False` da `0x80020009` con scode E_FAIL aunque la propiedad tenga setter; solo `doc.Save()` lo limpia y reescribe el archivo, así que no se restaura). Se informa en `modificado_por_lectura`. `se export` a PDF (Draft) y a PNG también deja `Dirty = true` sin cambiar el archivo (verificado 2026-11-26); cerrar con `--discard` no pierde nada |
 | `--overwrite` sobre un archivo en uso | **resuelto**: exit 6 con el original intacto (antes, exit 1 con el `PermissionError` crudo) |
 | `docs new --template` y `draft from-part --template` | **resuelto**: daban siempre exit 4; ahora usan `Documents.Add(ProgID, plantilla)` |
 | hresult de "ocupado" (exit 7) | **no reproducible**: Solid Edge no rechaza llamadas (atiende o encola) |
@@ -1142,7 +1154,7 @@ están en la sección de cada comando.
 | bridas y agujeros en chapa doblada | `sheetmetal tab` solo crea la base y no acepta una cara existente. Sin comando de brida: probado con `se run --allow-scripts` y `Flanges.AddSync` sobre una base creada en modo sincrónico. Después, en modo ordenado, `hole --plane front --direction reverse --through` perforó el tramo vertical. El DXF incluyó ambos agujeros y una línea de pliegue en `DOWN_CENTERLINES` |
 | `mass` sin densidad tras recalcular y guardar | **causa: la pieza no tiene material.** Sin material, `Model.GetPhysicalProperties` devuelve estado 2 y ceros tras `mass --density 7850` y `docs save` (también al reabrir); con un material aplicado (`MaterialTable.ApplyMaterialToDoc`) devuelve estado 1 sin guardar. Se asigna con `se material set` (desde el 2026-11-25). La CLI lo explica (ver "Propiedades físicas") |
 | vistas sobre el rótulo | **resuelto** (2026-11-26): el área útil excluye el marco y toda la franja del rótulo de cada tamaño (60,8 mm en A5-A2, 77,1 mm en A1-A0) más 5 mm; `auto` elige la mayor escala ISO 5455 que entra y una `--scale` que no entra se respeta con una `advertencia` |
-| marca de agua de Community Edition | en el PDF, no se puede quitar (DXF y PNG no la traen) |
+| marca de agua de Community Edition | **limitación inherente a Community Edition** (verificada 2026-11-26 en A3 y A4): en el PDF, gris claro abajo a la izquierda dentro del marco, en cada página exportada; no se puede quitar. DXF y PNG no la traen |
 
 **Cierres solos de Solid Edge (23 y 24/11):** no hubo crash: no hay eventos de error de `Edge.exe`
 ni volcados. Los del 24/11 a las 00:11 y a las 02:41 coinciden al segundo con apagados o reinicios
