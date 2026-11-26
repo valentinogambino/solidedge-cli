@@ -8,7 +8,7 @@ import typer
 
 from se_cli.commands._comun import sin_dialogos
 from se_cli.core import documentos
-from se_cli.core.errors import ArgumentoInvalido
+from se_cli.core.errors import ArgumentoInvalido, TiempoAgotado
 from se_cli.core.session import Sesion
 from se_cli.ejecucion import ejecutar
 
@@ -83,12 +83,20 @@ def nuevo(
             "plantilla": documentos.ruta_absoluta(template) if template else None,
         }
 
-    ejecutar(
-        ctx,
-        lambda sesion: sin_dialogos(sesion, lambda a: documentos.nuevo(a, tipo, template)),
-        modifica=True,
-        plan=plan,
-    )
+    def correr(sesion):
+        try:
+            return sin_dialogos(sesion, lambda a: documentos.nuevo(a, tipo, template))
+        except TiempoAgotado as error:
+            # `Documents.Add` sigue en Solid Edge aunque se deje de esperar: no se cierra solo.
+            error.mensaje += (
+                " El documento nuevo pudo quedar creado igual: revisá `se docs list` antes de "
+                "repetir el comando."
+            )
+            error.args = (error.mensaje,)
+            error.details["documento_pudo_crearse"] = True
+            raise
+
+    ejecutar(ctx, correr, modifica=True, plan=plan)
 
 
 @app.command("save")
