@@ -14,15 +14,21 @@ Se pasan los doce primeros (hasta `BendAngle`), como el script de `test_vivo_cha
 
 Medido en vivo (2026-11-26, Solid Edge 2026 Community, chapa de 1 mm, arista sobre la cara que
 mira hacia donde se levanta la brida):
-- `FlangeLength` se mide desde el plano de la cara que contiene la arista (`DimSide = igLeft`, el
-  valor por defecto) hasta el borde libre: la altura total sobre la cara opuesta es largo + espesor.
-  Con `DimSide = igRight` se mediría desde la cara opuesta (no se expone).
+- `FlangeLength` se mide (`DimSide = igLeft`, el valor por defecto) desde el plano de la cara que
+  contiene la arista hasta el borde libre, siguiendo la cara interior de la pared: la pared recta
+  mide `L - r*cot(angulo/2)` y a 90° la altura total sobre la cara opuesta es largo + espesor. Es
+  igual con `normal` y con `reverse`. Con `DimSide = igRight` se mediría desde la cara opuesta (a
+  90° probado en vivo: un espesor más corta; no se expone). Con `L <= r*cot(angulo/2)` Solid Edge
+  rechaza la brida.
 - `ThicknessSide` no es un sentido sino de qué lado de la arista queda el material: `normal` =
-  `seFlangeMaterialInside` (4, la pared queda dentro de la huella de la base y el pliegue come
-  chapa) y `reverse` = `seFlangeMaterialOutside` (5, la pared queda fuera de la huella, que no se
-  recorta). `igLeft`/`igRight` dan E_FAIL (`0x80070057`). El sentido de levante lo fija la arista
-  elegida: una arista de la cara superior levanta hacia arriba y una de la inferior, hacia abajo.
-  Con `reverse` la pared sale un espesor más corta que con `normal` (volumen medido).
+  `seFlangeMaterialInside` (4, la cara exterior de la pared pasa por la arista: pared dentro de la
+  huella) y `reverse` = `seFlangeMaterialOutside` (5, la cara interior pasa por la arista: pared
+  fuera de la huella). `igLeft`/`igRight` dan E_FAIL (`0x80070057`). El sentido de levante lo fija
+  la arista elegida: una arista de la cara superior levanta hacia arriba y una de la inferior,
+  hacia abajo. La base siempre se recorta: queda de `W - r*cot(angulo/2)` con `reverse` y de ese
+  valor menos `t/sen(angulo)` con `normal`; la pared de `reverse` no es más corta, la base sí es
+  más larga (README, "se sheetmetal flange"). `--angle` es el ángulo entre la pared y la base: el
+  doblez barre 180 - angulo.
 - `InsideRadius` vacío toma la variable `BendRadius` del documento al momento de crear la brida;
   el comando la lee y la informa.
 - `BendAngle` se pasa en radianes.
@@ -204,8 +210,9 @@ def crear_brida(
             raise error from causa
         raise ErrorCom(
             "Solid Edge rechazó la brida con esos parámetros (no cambió el modelo). Probá otro "
-            f"--length (mayor que el radio más el espesor), --angle (entre unos 2 y 178) o "
-            f"--radius, o --direction {'normal' if datos['direccion'] == 'reverse' else 'reverse'}"
+            "--length (mayor que radio*cot(ángulo/2), el radio a 90°), --angle (entre unos 2 y "
+            "178) o --radius, o --direction "
+            f"{'normal' if datos['direccion'] == 'reverse' else 'reverse'}"
             ", o revisá que la arista sirva para una brida.",
             hresult=error.hresult,
             details={

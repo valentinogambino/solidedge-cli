@@ -83,7 +83,7 @@ se --json --timeout 120 docs save-as C:\p\Chapa.psm
 se --json --timeout 120 sheetmetal flat-dxf --create --out C:\salida\chapa.dxf
 ```
 
-- Con `--direction normal` la pared queda dentro de la huella de la base; con `reverse`, fuera. Sin `--radius` rige el radio de plegado del documento.
+- Con `--direction normal` la pared queda dentro de la huella de la base; con `reverse`, fuera. El largo de la pared es el mismo en las dos: `--length` va desde el plano de la cara de la arista hasta el borde libre (pared recta = `L − r·cot(ángulo/2)`); lo que cambia es cuánto se recorta la base (a 90°, radio y espesor de 1 mm: 48 mm con `normal`, 49 mm con `reverse`). Sin `--radius` rige el radio de plegado del documento.
 - Una base creada con `tab` ordenado da exit 6 `base_ordenada`: rehacer la chapa con `tab --sync`.
 
 ## Ensamble con relaciones

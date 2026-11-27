@@ -107,7 +107,11 @@ def flange(
         str,
         typer.Option(
             "--length",
-            help="Altura desde la cara de la arista (ej. 30mm; sin unidad, metros). Mayor que 0.",
+            help=(
+                "Largo de la pared desde el plano de la cara de la arista hasta el borde libre, "
+                "sobre su cara interior (ej. 30mm; sin unidad, metros). Tiene que superar "
+                "radio*cot(ángulo/2), o sea el radio a 90°."
+            ),
         ),
     ],
     angle: Annotated[
@@ -117,7 +121,10 @@ def flange(
         str,
         typer.Option(
             "--direction",
-            help="normal (pared dentro de la huella de la base) o reverse (pared fuera de ella).",
+            help=(
+                "normal (pared dentro de la huella de la base) o reverse (pared fuera de ella). "
+                "El largo de la pared no cambia; con reverse la base se recorta menos."
+            ),
         ),
     ] = "normal",
     radius: Annotated[
