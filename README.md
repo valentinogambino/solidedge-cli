@@ -1003,8 +1003,8 @@ se sheetmetal flat-dxf --create                       # DXF con 4 LINE y 1 CIRCL
 ### `se sheetmetal flange`
 
 ```powershell
-se --json sheetmetal flange --edge 9 --length 30mm [--units mm] [--angle 90] [--direction normal|reverse] [--radius 1mm] [--doc Chapa.psm]
-# {"ok": true, "data": {"operacion": "brida", "nombre": "Flange_1", "arista": 9, "longitud_si": 0.03, "longitud": 30.0, "angulo": 90.0, "direccion": "normal", "radio_si": null, "radio": null, "volumen_antes": 5e-06, "volumen_despues": 6.5e-06, "unidades": {"longitud": "mm", "angulo": "deg"}}, "error": null}
+se --json sheetmetal flange --edge 9 --length 30mm [--units mm] [--angle 90] [--direction normal|reverse] [--radius 1mm] [--measure face|opposite] [--doc Chapa.psm]
+# {"ok": true, "data": {"operacion": "brida", "nombre": "Flange_1", "arista": 9, "longitud_si": 0.03, "longitud": 30.0, "angulo": 90.0, "direccion": "normal", "medida": "face", "radio_si": null, "radio": null, "volumen_antes": 5e-06, "volumen_despues": 6.5e-06, "unidades": {"longitud": "mm", "angulo": "deg"}}, "error": null}
 ```
 Levanta una **brida** sobre una arista recta de la base de una chapa (`Flanges.AddSync`).
 `--edge` es el índice de `se edges list` (la misma numeración que `round` y `chamfer`; los índices
@@ -1019,6 +1019,10 @@ cambia cuánto se recorta (ver más abajo).
 documento, y `data` informa el radio usado (`radio_si`, `radio`) y su origen (`radio_origen`:
 `explicito` o `documento`). El sentido de levante lo fija la arista elegida: una arista de la cara
 superior levanta hacia arriba y una de la inferior, hacia abajo.
+`--measure` dice desde dónde se mide `--length`: `face` (por defecto) desde el plano de la cara que
+contiene la arista, sobre la cara interior de la pared (a 90°, altura total largo + espesor), u
+`opposite` desde el plano de la cara opuesta (a 90°, altura total igual al largo). Con `face` la
+salida y el modelo son los de siempre; `data.medida` informa la elegida. Otro valor: exit 2.
 
 Precondiciones, en este orden:
 
@@ -1030,12 +1034,12 @@ Precondiciones, en este orden:
 | la base es ordenada | exit 6, `no_soportado`, `details.causa = "base_ordenada"`; el mensaje indica `sheetmetal tab --sync` |
 | la arista no existe | exit 5 |
 | la arista no es recta (círculo, arco, otra) | exit 2 |
-| Solid Edge rechazó los parámetros (`--angle` cerca de 180, `--length` que no supera radio·cot(ángulo/2), o sea el radio a 90°) | exit 4, `details.causa = "brida_rechazada"`; el modelo no cambia |
+| Solid Edge rechazó los parámetros (`--angle` cerca de 180, `--length` que no supera radio·cot(ángulo/2), o sea el radio a 90°; con `--measure opposite`, que no supera (radio+espesor)·cot(ángulo/2)) | exit 4, `details.causa = "brida_rechazada"`; el modelo no cambia |
 | el volumen no aumentó tras `AddSync` | se llama a `doc.Undo()` una vez y exit 4, `details.causa = "brida_sin_efecto"` (`deshecho` dice si el `Undo` anduvo) |
 
 Mide `Body.Volume` antes y después: `volumen_antes` y `volumen_despues` van en `data`, en m3.
 `--readonly` da exit 6 y `--dry-run` informa el plan (valida todo, sin COM). Por MCP es
-`sheetmetal_flange` (con `length` y `radius` como texto con unidad).
+`sheetmetal_flange` (con `length` y `radius` como texto con unidad, y `measure` `face` u `opposite`).
 
 Argumentos de `AddSync(pLocatedEdge, FlangeLength, ThicknessSide, InsideRadius, DimSide, BRType,
 BRWidth, BRLength, CRType, NeutralFactor, BnParamType, BendAngle, ...)` (se pasan los doce primeros;
@@ -1044,11 +1048,11 @@ los vacíos son `VT_EMPTY` y toman el valor por defecto de Solid Edge):
 | opción | argumento de `AddSync` |
 |---|---|
 | `--edge` | `pLocatedEdge`: la arista de `Body.Edges` |
-| `--length` | `FlangeLength`, en metros; se mide (`DimSide = igLeft`) desde el plano de la cara que contiene la arista hasta el borde libre, siguiendo la cara interior de la pared (la del lado cóncavo del doblez). Es igual con `normal` y con `reverse`; a 90° la altura total sobre la cara opuesta es largo + espesor |
+| `--length` | `FlangeLength`, en metros; con `--measure face` (`DimSide = igLeft`) se mide desde el plano de la cara que contiene la arista hasta el borde libre, siguiendo la cara interior de la pared (la del lado cóncavo del doblez). Es igual con `normal` y con `reverse`; a 90° la altura total sobre la cara opuesta es largo + espesor |
 | `--direction` | `ThicknessSide`: `seFlangeMaterialInside` (4) con `normal`, `seFlangeMaterialOutside` (5) con `reverse`; `igLeft`/`igRight` dan E_FAIL. No es legible ni modificable después de crear la brida (`FlangeMaterialSide` da error COM al leer y al asignar) |
 | `--radius` | `InsideRadius`, en metros; vacío si no se da (toma `BendRadius`) |
 | `--angle` | `BendAngle`, en radianes; vacío con 90 (el valor por defecto) |
-| (fijo) | `DimSide = igLeft`. Con `igRight` (no expuesto) la medida arranca en la cara opuesta: probado en vivo a 90°, la pared queda un espesor más corta (la punta a z = −29 mm en vez de −30 mm y el volumen baja 100 mm3, con `normal` y con `reverse`) |
+| `--measure` | `DimSide`: `igLeft` con `face` (por defecto), `igRight` con `opposite`. Con `igRight` la medida arranca en la cara opuesta: a 90° la punta queda a z = −29 mm en vez de −30 mm y el volumen baja 100 mm3, con `normal` y con `reverse` (regla y tabla más abajo) |
 | (sin opción) | `BRType`, `BRWidth`, `BRLength`, `CRType`, `NeutralFactor`, `BnParamType`: vacíos |
 
 Recorrido verificado en vivo (2026-11-26, test `test_chapa_con_brida_por_la_cli`):
@@ -1063,7 +1067,7 @@ se docs save-as C:\p\Chapa.psm
 se sheetmetal flat-dxf --create
 ```
 
-Regla de medida (medida en vivo 2026-11-27 sobre la geometría de 100 x 50 x 1 mm, brida en un borde
+Regla de medida con `--measure face` (medida en vivo 2026-11-27 sobre la geometría de 100 x 50 x 1 mm, brida en un borde
 de 100 mm; coincide con el volumen medido a la centésima en todos los casos de abajo). Con espesor `t`,
 radio interior `r`, ángulo `θ` (el de `--angle`), largo `L` (`--length`), `W` = 50 mm (lado de la base
 perpendicular a la arista) y `a` = 100 mm (largo de la arista):
@@ -1083,7 +1087,7 @@ perpendicular a la arista) y `a` = 100 mm (largo de la arista):
   cambia: `V(reverse) − V(normal) = a·t²/sen θ` (100 mm3 a 90°). La pared de `reverse` no es más
   corta: mide lo mismo, y es la base la que queda 1 mm más larga.
 
-Cálculo a mano contra lo medido en vivo (mm3; `a·t·b` es la base, `L` y `r` en mm):
+Con `--measure face` (`DimSide = igLeft`). Cálculo a mano contra lo medido en vivo (mm3; `a·t·b` es la base, `L` y `r` en mm):
 
 | caso | base | doblez | pared recta | cálculo | medido |
 |---|---|---|---|---|---|
@@ -1100,6 +1104,35 @@ Por ejemplo, `reverse` a 60° con `r` = 1 mm: `k` = 1,7321, base de 48,2679 mm, 
 En el modelo medido, a 90° la caja envolvente (x, y, z en mm) es 0–100, 0–50, −30–1 con `normal` y 0–100,
 0–51, −30–1 con `reverse`: la brida sale hacia abajo desde la cara z = 0 de la arista y la punta queda a
 30 mm de ese plano en las dos.
+
+**Con `--measure opposite` (`DimSide = igRight`)**
+
+Medido en vivo el 2026-11-27 (misma chapa de 100 x 50 x 1 mm; ocho combinaciones, `a` = 100 mm, `t` = 1 mm).
+La base plana y el doblez no cambian respecto de `face`; solo cambia la pared recta, que pasa a medir
+
+- `s = L − (r + t)·cot(θ/2)` (a 90°, `L − r − t`),
+
+porque `L` se mide desde el plano de la cara opuesta, un espesor más lejos (la diferencia con `face` es
+`t·cot(θ/2)`; a 90°, `t`). Con `L ≤ (r + t)·cot(θ/2)` Solid Edge rechaza la brida (`brida_rechazada`): a 90°
+con `r` = 1 mm y `t` = 1 mm, 1,0, 1,5, 1,9, 1,99 y 2,0 mm se rechazan y 2,01 mm se acepta, con `normal` y con
+`reverse`. La base es `b = W − k` (`reverse`) o `b = W − k − t/sen θ` (`normal`), con `k = r·cot(θ/2)`, y
+`V = a·t·(b + s) + a·(π − θ)/2·((r + t)² − r²)`. La altura total a 90° es `L` (la punta queda a z = −(L − 1) mm
+con la cara de la arista en z = 0 y la cara opuesta en z = 1). Las cajas envolventes coinciden con la regla (45°,
+`normal`, `r` 1, `L` 30: la punta a z = −20,213 mm; con `face`, −21,920 mm).
+
+| caso | base | doblez | pared recta | cálculo | medido | diferencia |
+|---|---|---|---|---|---|---|
+| `normal`, 45°, `r` 1, `L` 30 | 4617,16 | 353,43 | 2517,16 | 7487,74 | 7487,74 | < 0,0001 |
+| `reverse`, 45°, `r` 1, `L` 30 | 4758,58 | 353,43 | 2517,16 | 7629,17 | 7629,17 | < 0,0001 |
+| `normal`, 60°, `r` 1, `L` 30 | 4711,32 | 314,16 | 2653,59 | 7679,07 | 7679,07 | < 0,0001 |
+| `reverse`, 60°, `r` 1, `L` 30 | 4826,79 | 314,16 | 2653,59 | 7794,54 | 7794,54 | < 0,0001 |
+| `normal`, 90°, `r` 1, `L` 30 | 4800,00 | 235,62 | 2800,00 | 7835,62 | 7835,62 | < 0,0001 |
+| `reverse`, 90°, `r` 1, `L` 30 | 4900,00 | 235,62 | 2800,00 | 7935,62 | 7935,62 | < 0,0001 |
+| `normal`, 60°, `r` 2, `L` 20 | 4538,12 | 523,60 | 1480,38 | 6542,10 | 6542,10 | < 0,0001 |
+| `reverse`, 60°, `r` 2, `L` 20 | 4653,59 | 523,60 | 1480,38 | 6657,57 | 6657,57 | < 0,0001 |
+
+Lo de `r` 2 distingue `(r + t)` de `2r` y de `2t` (`L − 3k` = 14,804 mm, medido 14,804). Sin verificar: otros espesores
+(todo se midió con `t` = 1 mm) y ángulos mayores de 90°.
 
 Parámetros que Solid Edge rechaza (`--angle 179`, `--length 0.5mm --radius 5mm`) dan exit 4 con
 `brida_rechazada` y sin cambiar el modelo. Sin verificar: el aspecto del DXF desarrollado con la brida
@@ -1510,7 +1543,7 @@ se rechazan antes de tocar Solid Edge).
 | `sketch_profile` | `se sketch profile` |
 | `extrude` | `se extrude` |
 | `sheetmetal_tab` | `se sheetmetal tab` (base de una chapa; `direction` `normal` o `reverse`; `sync` para la base sincrónica) |
-| `sheetmetal_flange` | `se sheetmetal flange` (brida sobre una arista recta; `edge`, `length`, `angle`, `direction`, `radius`, `units`) |
+| `sheetmetal_flange` | `se sheetmetal flange` (brida sobre una arista recta; `edge`, `length`, `angle`, `direction`, `radius`, `measure`, `units`) |
 | `asm_add`, `asm_tree` | `se asm add`, `se asm tree` |
 
 Todas aceptan `timeout` (segundos, mayor que 0 y hasta 3600; el esquema lo publica como

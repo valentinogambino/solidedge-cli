@@ -247,6 +247,28 @@ def test_sheetmetal_tab_sync_y_flange(app_falsa):
     assert brida["operacion"] == "brida" and brida["longitud"] == 30.0 and brida["angulo"] == 45
     assert brida["volumen_despues"] > brida["volumen_antes"]
     assert app_falsa.historial_alertas[-2:] == [False, True]
+    assert brida["medida"] == "face"
+
+
+def test_sheetmetal_flange_propaga_measure(app_falsa):
+    con_modelado(app_falsa.agregar_documento("Chapa.psm", tipo=4))
+    datos(servidor.sketch_profile(_rectangulo()))
+    datos(servidor.sheetmetal_tab(sync=True))
+    app_falsa.registro.clear()
+
+    brida = datos(servidor.sheetmetal_flange(edge=9, length="30mm", measure="opposite"))
+
+    assert brida["medida"] == "opposite"
+    [(_, _, _, _, _, _, resto)] = [c for c in app_falsa.registro if c[0] == "Flanges.AddSync"]
+    assert resto[0] == 2  # DimSide = igRight
+
+
+def test_sheetmetal_flange_declara_measure_en_el_esquema():
+    herramientas = asyncio.run(servidor.mcp.list_tools())
+    esquema = next(h for h in herramientas if h.name == "sheetmetal_flange").inputSchema
+    measure = esquema["properties"]["measure"]
+    assert measure["enum"] == ["face", "opposite"] and measure["default"] == "face"
+    assert "measure" not in esquema.get("required", [])
 
 
 def test_sheetmetal_flange_errores(app_falsa):
@@ -268,6 +290,7 @@ def test_sheetmetal_flange_rechaza_por_esquema(monkeypatch):
         {"edge": 0, "length": "30mm"},
         {"edge": 1, "length": "30mm", "angle": 180},
         {"edge": 1, "length": "30mm", "direction": "symmetric"},
+        {"edge": 1, "length": "30mm", "measure": "inside"},
         {"edge": 1, "length": "30mm", "extra": True},
         {"length": "30mm"},
     ):
