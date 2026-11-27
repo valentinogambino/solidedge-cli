@@ -292,3 +292,57 @@ def test_chapa_con_brida_por_la_cli(tmp_path):
         assert sum(_entidades_dxf(tmp_path / "con_brida.dxf").values()) > 0
     finally:
         _cerrar(nombre)
+
+
+@pytest.mark.live
+@pytest.mark.parametrize(
+    ("medida", "direccion", "volumen_mm3"),
+    [
+        ("face", "normal", 7935.6194),
+        ("opposite", "normal", 7835.6194),
+        ("opposite", "reverse", 7935.6194),
+    ],
+)
+def test_brida_con_measure_por_la_cli(medida, direccion, volumen_mm3):
+    """Chapa 100x50x1 mm, brida de 30 mm a 90° con radio 1 mm: el volumen sale de la fórmula.
+
+    `opposite` mide desde la cara opuesta: la pared recta es `L - (r+t)*cot(ángulo/2)` (a 90°, un
+    espesor más corta que con `face`). V = a*t*(b+s) + a*(pi-theta)/2*((r+t)^2-r^2), con a = 100,
+    t = 1, r = 1, b = 50 - r*cot(theta/2) (- t/sen(theta) con `normal`).
+    """
+    r, sobre = _correr("docs", "new", "sheetmetal")
+    assert r.exit_code == 0, sobre
+    nombre = sobre["data"]["nombre"]
+    try:
+        d = ["--doc", nombre]
+        assert (
+            _correr("sketch", "rect", "--width", "100mm", "--height", "50mm", *d)[0].exit_code == 0
+        )
+        r, sobre = _correr("sheetmetal", "tab", "--sync", *d)
+        assert r.exit_code == 0, sobre
+        r, sobre = _correr("edges", "list", "--units", "mm", *d)
+        rectas = [a for a in sobre["data"]["aristas"] if a["tipo"] == "linea"]
+        larga = max(rectas, key=lambda a: a["longitud"])
+
+        r, sobre = _correr(
+            "sheetmetal",
+            "flange",
+            "--edge",
+            str(larga["indice"]),
+            "--length",
+            "30mm",
+            "--radius",
+            "1mm",
+            "--direction",
+            direccion,
+            "--measure",
+            medida,
+            "--units",
+            "mm",
+            *d,
+        )
+        assert r.exit_code == 0, sobre
+        assert sobre["data"]["medida"] == medida
+        assert sobre["data"]["volumen_despues"] * 1e9 == pytest.approx(volumen_mm3, abs=0.01)
+    finally:
+        _cerrar(nombre)
