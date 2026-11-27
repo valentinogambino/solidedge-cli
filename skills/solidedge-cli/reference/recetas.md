@@ -84,6 +84,7 @@ se --json --timeout 120 sheetmetal flat-dxf --create --out C:\salida\chapa.dxf
 ```
 
 - Con `--direction normal` la pared queda dentro de la huella de la base; con `reverse`, fuera. El largo de la pared es el mismo en las dos: con `--measure face` (por defecto) `--length` va desde el plano de la cara de la arista hasta el borde libre (pared recta = `L − r·cot(ángulo/2)`; a 90° la altura total es largo + espesor), y con `--measure opposite` se mide desde la cara opuesta (pared recta = `L − (r + espesor)·cot(ángulo/2)`; a 90° la altura total es el largo); lo que cambia es cuánto se recorta la base (a 90°, radio y espesor de 1 mm: 48 mm con `normal`, 49 mm con `reverse`). Sin `--radius` rige el radio de plegado del documento.
+- El espesor es la variable `MaterialThickness`: `se vars set MaterialThickness 2mm` antes del `tab` (`BendRadius` no la sigue; sin `--radius` la brida usa el radio del documento y `data.radio` lo informa). La fórmula vale con cualquier espesor y con `--angle` mayor de 90° (la pared se abre hacia afuera); el mínimo de `--length` es el de la regla de arriba a cualquier ángulo. El desarrollo (`flat-dxf --create`) mide `b + s + (π − ángulo)·(r + K·espesor)`, con K = `NeutralFactor` (0,33 por defecto).
 - Una base creada con `tab` ordenado da exit 6 `base_ordenada`: rehacer la chapa con `tab --sync`.
 
 ## Ensamble con relaciones
