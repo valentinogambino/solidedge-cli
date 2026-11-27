@@ -1470,6 +1470,8 @@ de extensiones**, elegí **Instalar extensión…**, seleccioná el archivo `.mc
 y confirmá la instalación. En la configuración de la extensión, seleccioná
 el ejecutable de **Python 3.11 x64**. Si instalaste Python con `uv`, podés
 obtener la ruta con `uv python find --system 3.11`.
+El manifiesto no declara `compatibility.runtimes` porque el intérprete lo elige el usuario en esa
+opción; el `python` del PATH no importa, así que Claude Desktop no lo compara con nada.
 La opción **Timeout (s)** (por defecto 120) fija cuánto espera cada herramienta a Solid Edge; ver
 "Timeout" más abajo.
 
