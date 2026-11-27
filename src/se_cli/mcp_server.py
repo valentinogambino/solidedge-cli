@@ -368,13 +368,27 @@ def sheetmetal_tab(
 @mcp.tool()
 def sheetmetal_flange(
     edge: Annotated[int, Field(ge=1, description="Arista recta: índice de `se edges list`.")],
-    length: Annotated[str, Field(description="Longitud de la brida, ej. 30mm (>0).")],
+    length: Annotated[
+        str,
+        Field(
+            description=(
+                "Largo de la pared desde el plano de la cara de la arista hasta el borde libre, "
+                "sobre su cara interior, ej. 30mm. Tiene que superar radio*cot(ángulo/2) "
+                "(el radio a 90°)."
+            )
+        ),
+    ],
     angle: Annotated[
         float, Field(gt=0, lt=180, description="Ángulo de la brida en grados.")
     ] = brida.ANGULO_POR_DEFECTO,
     direction: Annotated[
         Literal["normal", "reverse"],
-        Field(description="normal: pared dentro de la huella de la base; reverse: fuera."),
+        Field(
+            description=(
+                "normal: pared dentro de la huella de la base; reverse: fuera. "
+                "El largo de la pared no cambia; con reverse la base se recorta menos."
+            )
+        ),
     ] = "normal",
     radius: Annotated[
         str | None,

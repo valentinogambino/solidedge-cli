@@ -87,7 +87,7 @@ Cada fila: qué se ve, el exit, la causa y qué hacer. Los exit codes y su `erro
 | una vista pisa el rótulo | 0 | el layout reserva 30 mm y el rótulo ISO mide 50.8 mm | `--scale` menor (por ejemplo `1:2`) |
 | PDF con leyenda "Solid Edge Community Edition" | 0 | Community Edition | no se quita; DXF y PNG no la traen |
 | `sheetmetal flange` sobre base ordenada | 6 | `details.causa = "base_ordenada"` | rehacer la base con `sheetmetal tab --sync` |
-| `sheetmetal flange` rechazado por Solid Edge | 4 | `details.causa = "brida_rechazada"` (ángulo cerca de 180, `--length` menor que radio más espesor); el modelo no cambia | `--length` mayor o `--radius` menor |
+| `sheetmetal flange` rechazado por Solid Edge | 4 | `details.causa = "brida_rechazada"` (ángulo cerca de 180, `--length` que no supera `radio·cot(ángulo/2)`, o sea el radio a 90°); el modelo no cambia | `--length` mayor o `--radius` menor |
 | `sheetmetal flange` con arista inexistente | 5 | índice viejo | `edges list` de nuevo |
 | `sheetmetal flat-dxf` sin desarrollo | 5 | la chapa no lo tiene | repetir con `--create` (guarda, cierra y reabre la chapa) |
 | `flat-dxf --create` rechazado por Solid Edge | 6 | no se puede desarrollar (por ejemplo, base que no es un Tab) | rehacer la chapa con `sheetmetal tab`; la chapa no se guardó; si quedó un desarrollo vacío en la sesión, cerrarla con `docs close <doc> --discard` |
