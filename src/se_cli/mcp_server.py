@@ -372,9 +372,11 @@ def sheetmetal_flange(
         str,
         Field(
             description=(
-                "Largo de la pared desde el plano de la cara de la arista hasta el borde libre, "
-                "sobre su cara interior, ej. 30mm. Tiene que superar radio*cot(ángulo/2) "
-                "(el radio a 90°)."
+                "Largo de la pared, ej. 30mm. Con measure=face se mide desde el plano de la cara "
+                "de la arista hasta el borde libre, sobre su cara interior, y tiene que superar "
+                "radio*cot(ángulo/2) (el radio a 90°); con measure=opposite se mide desde la "
+                "cara opuesta (a 90° es la altura total) y tiene que superar "
+                "(radio+espesor)*cot(ángulo/2)."
             )
         ),
     ],
@@ -394,6 +396,16 @@ def sheetmetal_flange(
         str | None,
         Field(description="Radio interior del plegado, ej. 1mm. Por defecto, el del documento."),
     ] = None,
+    measure: Annotated[
+        Literal["face", "opposite"],
+        Field(
+            description=(
+                "Desde dónde se mide length: face (plano de la cara de la arista; a 90° la "
+                "altura total es largo + espesor) u opposite (plano de la cara opuesta; a 90° "
+                "la altura total es el largo)."
+            )
+        ),
+    ] = "face",
     units: Units = None,
     doc: Doc = None,
     timeout: Timeout = None,
@@ -404,11 +416,18 @@ def sheetmetal_flange(
     """
     with _respuesta() as (sobre, completar):
         elegidas = unidades.parsear_unidades(units)
-        brida.planificar_brida(edge, length, angle, direction, radius)
+        brida.planificar_brida(edge, length, angle, direction, radius, measure)
         completar(
             _llamar(
                 lambda app: brida.crear_brida(
-                    acceso.documento(app, doc), edge, length, angle, direction, radius, elegidas
+                    acceso.documento(app, doc),
+                    edge,
+                    length,
+                    angle,
+                    direction,
+                    radius,
+                    elegidas,
+                    measure,
                 ),
                 timeout,
                 sin_alertas=True,

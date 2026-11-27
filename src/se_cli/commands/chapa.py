@@ -108,9 +108,11 @@ def flange(
         typer.Option(
             "--length",
             help=(
-                "Largo de la pared desde el plano de la cara de la arista hasta el borde libre, "
-                "sobre su cara interior (ej. 30mm; sin unidad, metros). Tiene que superar "
-                "radio*cot(ángulo/2), o sea el radio a 90°."
+                "Largo de la pared (ej. 30mm; sin unidad, metros). Con --measure face (por "
+                "defecto) se mide desde el plano de la cara de la arista hasta el borde libre, "
+                "sobre su cara interior, y tiene que superar radio*cot(ángulo/2), o sea el radio "
+                "a 90°; con --measure opposite se mide desde la cara opuesta (a 90° es la altura "
+                "total) y tiene que superar (radio+espesor)*cot(ángulo/2)."
             ),
         ),
     ],
@@ -134,6 +136,17 @@ def flange(
             help="Radio interior del plegado (ej. 1mm). Por defecto, el del documento.",
         ),
     ] = None,
+    measure: Annotated[
+        str,
+        typer.Option(
+            "--measure",
+            help=(
+                "Desde dónde se mide --length: face (plano de la cara de la arista; a 90° la "
+                "altura total es largo + espesor) u opposite (plano de la cara opuesta; a 90° la "
+                "altura total es el largo)."
+            ),
+        ),
+    ] = brida.MEDIDA_POR_DEFECTO,
     units: UnitsOpcion = None,
     doc: DocOpcion = None,
 ) -> None:
@@ -147,14 +160,21 @@ def flange(
 
     def plan() -> dict:
         validar_units(units)
-        return brida.planificar_brida(edge, length, angle, direction, radius)
+        return brida.planificar_brida(edge, length, angle, direction, radius, measure)
 
     def correr(sesion):
         elegidas = unidades.parsear_unidades(units)
         return sin_dialogos(
             sesion,
             lambda a: brida.crear_brida(
-                acceso.documento(a, doc), edge, length, angle, direction, radius, elegidas
+                acceso.documento(a, doc),
+                edge,
+                length,
+                angle,
+                direction,
+                radius,
+                elegidas,
+                measure,
             ),
         )
 

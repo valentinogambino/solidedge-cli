@@ -14,12 +14,16 @@ Se pasan los doce primeros (hasta `BendAngle`), como el script de `test_vivo_cha
 
 Medido en vivo (2026-11-26, Solid Edge 2026 Community, chapa de 1 mm, arista sobre la cara que
 mira hacia donde se levanta la brida):
-- `FlangeLength` se mide (`DimSide = igLeft`, el valor por defecto) desde el plano de la cara que
-  contiene la arista hasta el borde libre, siguiendo la cara interior de la pared: la pared recta
-  mide `L - r*cot(angulo/2)` y a 90° la altura total sobre la cara opuesta es largo + espesor. Es
-  igual con `normal` y con `reverse`. Con `DimSide = igRight` se mediría desde la cara opuesta (a
-  90° probado en vivo: un espesor más corta; no se expone). Con `L <= r*cot(angulo/2)` Solid Edge
+- `FlangeLength` con `DimSide = igLeft` (`--measure face`, el valor por defecto) se mide desde el
+  plano de la cara que contiene la arista hasta el borde libre, siguiendo la cara interior de la
+  pared: la pared recta mide `L - r*cot(angulo/2)` y a 90° la altura total sobre la cara opuesta
+  es largo + espesor. Es igual con `normal` y con `reverse`. Con `L <= r*cot(angulo/2)` Solid Edge
   rechaza la brida.
+- Con `DimSide = igRight` (`--measure opposite`) se mide desde el plano de la cara opuesta, o sea
+  contando el espesor: la pared recta mide `L - (r+t)*cot(angulo/2)` (a 90° la altura total es L)
+  y Solid Edge rechaza la brida con `L <= (r+t)*cot(angulo/2)`. La base queda igual que con
+  `igLeft`. Medido en vivo el 2026-11-27 (45, 60 y 90° con `normal` y `reverse`, y 60° con
+  `--length 20mm --radius 2mm`): el volumen calculado coincide con el medido a la décima de mm³.
 - `ThicknessSide` no es un sentido sino de qué lado de la arista queda el material: `normal` =
   `seFlangeMaterialInside` (4, la cara exterior de la pared pasa por la arista: pared dentro de la
   huella) y `reverse` = `seFlangeMaterialOutside` (5, la cara interior pasa por la arista: pared
@@ -65,6 +69,10 @@ ANGULO_POR_DEFECTO = 90.0
 # `ThicknessSide`: de qué lado de la arista queda el material de la pared (ver el docstring).
 LADOS_DE_MATERIAL = {"normal": "seFlangeMaterialInside", "reverse": "seFlangeMaterialOutside"}
 
+# `DimSide` de `FlangeLength`: desde dónde se mide `--length` (ver el docstring).
+MEDIDAS = {"face": "igLeft", "opposite": "igRight"}
+MEDIDA_POR_DEFECTO = "face"
+
 PISTA_BASE_ORDENADA = (
     "Creá la base de la chapa con `se sheetmetal tab --sync` (modo sincrónico) y después la brida."
 )
@@ -88,8 +96,23 @@ def validar_angulo(grados: float) -> float:
     return float(grados)
 
 
+def validar_medida(texto: str) -> str:
+    clave = str(texto).strip().lower()
+    if clave not in MEDIDAS:
+        raise ArgumentoInvalido(
+            f"--measure inválido: {texto!r}. Usá {' o '.join(MEDIDAS)}.",
+            details={"validas": list(MEDIDAS)},
+        )
+    return clave
+
+
 def planificar_brida(
-    arista: int, longitud: str, angulo: float, direccion: str, radio: str | None
+    arista: int,
+    longitud: str,
+    angulo: float,
+    direccion: str,
+    radio: str | None,
+    medida: str = MEDIDA_POR_DEFECTO,
 ) -> dict[str, Any]:
     direccion = validar_direccion(direccion)
     if direccion not in DIRECCIONES_DE_TAB:
@@ -104,6 +127,7 @@ def planificar_brida(
         "angulo": validar_angulo(angulo),
         "direccion": direccion,
         "radio_si": None if radio is None else parsear_longitud(radio, "--radius"),
+        "medida": validar_medida(medida),
     }
 
 
@@ -165,9 +189,10 @@ def crear_brida(
     direccion: str,
     radio: str | None,
     elegidas: dict[str, str] | None = None,
+    medida: str = MEDIDA_POR_DEFECTO,
 ) -> dict[str, Any]:
     """Brida sobre una arista recta del cuerpo (`Flanges.AddSync`), verificada por volumen."""
-    datos = planificar_brida(arista, longitud, angulo, direccion, radio)
+    datos = planificar_brida(arista, longitud, angulo, direccion, radio, medida)
     modelo = _exigir_base_sincronica(doc)
     aristas = _aristas_del(leer(lambda: modelo.Body))
     _, elegida = _seleccionar(aristas, [datos["arista"]])
@@ -188,8 +213,13 @@ def crear_brida(
     else:
         explicito = True
     lado = constante(LADOS_DE_MATERIAL[datos["direccion"]])
-    medida_desde = constante("igLeft")
+    medida_desde = constante(MEDIDAS[datos["medida"]])
     angulo_com = vacio if datos["angulo"] == ANGULO_POR_DEFECTO else math.radians(datos["angulo"])
+    minimo = (
+        "mayor que radio*cot(ángulo/2), el radio a 90°"
+        if datos["medida"] == "face"
+        else "mayor que (radio+espesor)*cot(ángulo/2), radio+espesor a 90°"
+    )
     antes = _volumen(doc)
     flanges = leer(lambda: modelo.Flanges)
     try:
@@ -210,8 +240,7 @@ def crear_brida(
             raise error from causa
         raise ErrorCom(
             "Solid Edge rechazó la brida con esos parámetros (no cambió el modelo). Probá otro "
-            "--length (mayor que radio*cot(ángulo/2), el radio a 90°), --angle (entre unos 2 y "
-            "178) o --radius, o --direction "
+            f"--length ({minimo}), --angle (entre unos 2 y 178) o --radius, o --direction "
             f"{'normal' if datos['direccion'] == 'reverse' else 'reverse'}"
             ", o revisá que la arista sirva para una brida.",
             hresult=error.hresult,
@@ -249,6 +278,7 @@ def crear_brida(
         "longitud": round(unidades.de_si(datos["longitud_si"], largo), 12) + 0.0,
         "angulo": datos["angulo"],
         "direccion": datos["direccion"],
+        "medida": datos["medida"],
         "radio_si": radio_si,
         "radio_origen": radio_origen if radio_si is not None else None,
         "radio": None if radio_si is None else round(unidades.de_si(radio_si, largo), 12) + 0.0,
@@ -258,4 +288,4 @@ def crear_brida(
     }
 
 
-__all__ = ["crear_brida", "planificar_brida"]
+__all__ = ["crear_brida", "planificar_brida", "validar_medida"]

@@ -100,6 +100,7 @@ def test_flange_camino_feliz(cli, app_falsa, base_sync):
     assert datos["arista"] == ARISTA_LARGA
     assert datos["longitud_si"] == pytest.approx(0.03) and datos["longitud"] == 30.0
     assert datos["angulo"] == 90.0 and datos["direccion"] == "normal"
+    assert datos["medida"] == "face"
     assert datos["radio_si"] is None and datos["radio"] is None and datos["radio_origen"] is None
     assert datos["volumen_despues"] > datos["volumen_antes"]
     assert datos["unidades"] == {"longitud": "mm", "angulo": "deg"}
@@ -135,6 +136,64 @@ def test_flange_con_angulo_radio_y_direccion(cli, app_falsa, base_sync):
     [(_, _, largo, lado, radio, angulo, _)] = _llamadas(app_falsa, "Flanges.AddSync")
     assert largo == pytest.approx(0.0254) and lado == 5  # seFlangeMaterialOutside
     assert radio == pytest.approx(0.002) and angulo == pytest.approx(math.radians(45))
+
+
+def test_flange_measure_face_pasa_igleft_y_opposite_pasa_igright(cli, app_falsa, base_sync):
+    r, sobre = cli("sheetmetal", "flange", "--edge", "9", "--length", "30mm", "--measure", "face")
+    assert r.exit_code == 0, r.output
+    assert sobre["data"]["medida"] == "face"
+    r, sobre = cli(
+        "sheetmetal", "flange", "--edge", "10", "--length", "30mm", "--measure", "opposite"
+    )
+    assert r.exit_code == 0, r.output
+    assert sobre["data"]["medida"] == "opposite" and sobre["data"]["longitud_si"] == 0.03
+    [(_, _, _, _, _, _, cara), (_, _, _, _, _, _, opuesta)] = _llamadas(
+        app_falsa, "Flanges.AddSync"
+    )
+    assert cara[0] == 1 and opuesta[0] == 2  # igLeft y igRight
+    assert cara[1:] == opuesta[1:] == (None,) * 6
+
+
+def test_flange_measure_no_distingue_mayusculas(cli, app_falsa, base_sync):
+    r, sobre = cli(
+        "sheetmetal", "flange", "--edge", "9", "--length", "30mm", "--measure", "OPPOSITE"
+    )
+    assert r.exit_code == 0 and sobre["data"]["medida"] == "opposite"
+
+
+def test_flange_measure_invalido_da_exit_2_con_las_validas(cli, app_falsa, base_sync):
+    r, sobre = cli("sheetmetal", "flange", "--edge", "9", "--length", "30mm", "--measure", "mitad")
+    assert (
+        r.exit_code == 2 and sobre["ok"] is False and sobre["error"]["code"] == "argumento_invalido"
+    )
+    assert sobre["error"]["details"]["validas"] == ["face", "opposite"]
+    assert _llamadas(app_falsa, "Flanges.AddSync") == []
+
+
+def test_flange_dry_run_informa_la_medida(cli, app_falsa, base_sync):
+    r, sobre = cli.con(
+        "--dry-run",
+        "sheetmetal",
+        "flange",
+        "--edge",
+        "9",
+        "--length",
+        "30mm",
+        "--measure",
+        "opposite",
+    )
+    assert r.exit_code == 0 and sobre["data"]["medida"] == "opposite"
+    assert app_falsa.registro == []
+
+
+def test_flange_rechazada_nombra_el_minimo_segun_la_medida(cli, base_sync):
+    base_sync.brida_rechazada = True
+    _, cara = cli("sheetmetal", "flange", "--edge", "9", "--length", "1mm")
+    _, opuesta = cli(
+        "sheetmetal", "flange", "--edge", "9", "--length", "1mm", "--measure", "opposite"
+    )
+    assert "mayor que radio*cot" in cara["error"]["message"]
+    assert "(radio+espesor)*cot" in opuesta["error"]["message"]
 
 
 def test_flange_sin_radius_informa_el_radio_de_plegado_del_documento(cli, app_falsa, base_sync):
@@ -184,6 +243,9 @@ def test_flange_sin_units_sale_en_si(cli, base_sync):
         ["--edge", "9", "--length", "30mm", "--angle", "180"],
         ["--edge", "9", "--length", "30mm", "--angle", "-10"],
         ["--edge", "9", "--length", "30mm", "--direction", "symmetric"],
+        ["--edge", "9", "--length", "30mm", "--measure", "inside"],
+        ["--edge", "9", "--length", "30mm", "--measure", "igRight"],
+        ["--edge", "9", "--length", "30mm", "--measure", ""],
         ["--edge", "9", "--length", "30mm", "--radius", "0"],
         ["--edge", "9", "--length", "30mm", "--units", "furlong"],
     ],
@@ -294,6 +356,7 @@ def test_flange_readonly_y_dry_run(cli, app_falsa, base_sync):
         "angulo": 60.0,
         "direccion": "normal",
         "radio_si": None,
+        "medida": "face",
     }
     assert app_falsa.registro == []
 
