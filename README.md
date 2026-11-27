@@ -1035,7 +1035,7 @@ Precondiciones, en este orden:
 | la arista no existe | exit 5 |
 | la arista no es recta (círculo, arco, otra) | exit 2 |
 | Solid Edge rechazó los parámetros (`--angle` cerca de 180, `--length` que no supera radio·cot(ángulo/2), o sea el radio a 90°; con `--measure opposite`, que no supera (radio+espesor)·cot(ángulo/2)) | exit 4, `details.causa = "brida_rechazada"`; el modelo no cambia |
-| el volumen no aumentó tras `AddSync` | se llama a `doc.Undo()` una vez y exit 4, `details.causa = "brida_sin_efecto"` (`deshecho` dice si el `Undo` anduvo) |
+| el volumen no cambió tras `AddSync` | se llama a `doc.Undo()` una vez y exit 4, `details.causa = "brida_sin_efecto"` (`deshecho` dice si el `Undo` anduvo) |
 
 Mide `Body.Volume` antes y después: `volumen_antes` y `volumen_despues` van en `data`, en m3.
 `--readonly` da exit 6 y `--dry-run` informa el plan (valida todo, sin COM). Por MCP es
@@ -1076,8 +1076,8 @@ perpendicular a la arista) y `a` = 100 mm (largo de la arista):
   recta (a 90° vale `r`).
 - Pared recta: `s = L − k`, igual con `normal` y con `reverse`. `L` se mide desde el plano de la cara
   de la arista hasta el borde libre, sobre la cara interior de la pared; con `L ≤ k` Solid Edge rechaza
-  la brida (probado a 90° con `r` = 1 mm: 0,5, 0,9 y 1,0 mm dan `brida_rechazada`; 1,2 mm se acepta,
-  en las dos direcciones; con otros ángulos no se probó el límite).
+  la brida (probado con `r` = 1 mm a 45, 60, 90 y 120°: un largo 1 % por debajo de `r·cot(θ/2)` se
+  rechaza y uno 1 % por encima se acepta; tabla de límites más abajo).
 - Doblez: barre `π − θ` (45° da 135°, 60° da 120°); sección `(π − θ)/2·((r + t)² − r²)`.
 - Base plana: se recorta, nunca se extiende. Queda de largo `b = W − k` con `reverse` (la cara interior
   de la pared pasa por la arista original, la pared sale fuera de la huella) y `b = W − k − t/sen θ`
@@ -1131,12 +1131,100 @@ con la cara de la arista en z = 0 y la cara opuesta en z = 1). Las cajas envolve
 | `normal`, 60°, `r` 2, `L` 20 | 4538,12 | 523,60 | 1480,38 | 6542,10 | 6542,10 | < 0,0001 |
 | `reverse`, 60°, `r` 2, `L` 20 | 4653,59 | 523,60 | 1480,38 | 6657,57 | 6657,57 | < 0,0001 |
 
-Lo de `r` 2 distingue `(r + t)` de `2r` y de `2t` (`L − 3k` = 14,804 mm, medido 14,804). Sin verificar: otros espesores
-(todo se midió con `t` = 1 mm) y ángulos mayores de 90°.
+Lo de `r` 2 distingue `(r + t)` de `2r` y de `2t` (`L − 3k` = 14,804 mm, medido 14,804).
 
 Parámetros que Solid Edge rechaza (`--angle 179`, `--length 0.5mm --radius 5mm`) dan exit 4 con
-`brida_rechazada` y sin cambiar el modelo. Sin verificar: el aspecto del DXF desarrollado con la brida
-más allá de que tiene entidades; ángulos mayores de 90° y otros largos de base.
+`brida_rechazada` y sin cambiar el modelo.
+
+**Otros espesores, ángulos mayores de 90°, otros anchos y desarrollo**
+
+Medido en vivo el 2026-11-27 (la misma fórmula, sin cambios; unas 70 corridas con los límites y el desarrollo). `V` en mm3, cálculo
+y medido coinciden a la centésima (diferencia < 0,005) en todos. Salvo que se diga otra cosa, `L` = 30 mm,
+base de 100 x 50 mm (`a` = 100, `W` = 50) y `r` = 1 mm.
+
+- **Espesor.** El de la chapa es la variable `MaterialThickness` (`se vars set MaterialThickness 2mm`
+  antes del Tab; no hay opción en `tab`). `BendRadius` **no** acompaña al espesor: queda en 1 mm con
+  `t` = 0,5 y con `t` = 2, así que sin `--radius` la brida usa 1 mm y `data.radio` lo informa. El factor
+  neutro (`NeutralFactor`) es 0,33.
+- **Más de 90°.** Solid Edge los acepta (120 y 135° probados) y la fórmula sigue valiendo, con `cot(θ/2)`
+  y `sen θ` definidos. La pared se abre hacia afuera de la base: a 120° con `normal` la caja envolvente llega a
+  y = 64,7 mm (la base mide 50) y la punta queda a z = −26,0 mm. La base se recorta igual (`W − k` y `W − k − t/sen θ`).
+- **Ancho de base.** `W` = 80 (base 100 x 80) y brida en el borde corto de 100 x 50 (`a` = 50, `W` = 100).
+  `a` multiplica todo el volumen y `W` solo entra en la base.
+
+| `t` | `θ` | dirección | `--measure` | cálculo | medido |
+|---|---|---|---|---|---|
+| 2 | 90° | `normal` | `face` | 15828,32 | 15828,32 |
+| 2 | 90° | `reverse` | `face` | 16228,32 | 16228,32 |
+| 2 | 60° | `normal` | `face` | 15683,06 | 15683,06 |
+| 2 | 60° | `reverse` | `face` | 16144,94 | 16144,94 |
+| 2 | 90° | `normal` | `opposite` | 15428,32 | 15428,32 |
+| 2 | 60° | `reverse` | `opposite` | 15452,12 | 15452,12 |
+| 2 (`r` 2) | 90° | `normal` | `face` | 15742,48 | 15742,48 |
+| 0,5 | 90° | `normal` | `face` | 3973,17 | 3973,17 |
+| 0,5 | 90° | `reverse` | `face` | 3998,17 | 3998,17 |
+| 0,5 | 60° | `normal` | `face` | 3928,83 | 3928,83 |
+| 0,5 | 60° | `reverse` | `face` | 3957,69 | 3957,69 |
+| 0,5 | 90° | `normal` | `opposite` | 3948,17 | 3948,17 |
+| 0,5 | 60° | `reverse` | `opposite` | 3914,39 | 3914,39 |
+| 0,5 (`r` 0,5) | 60° | `reverse` | `face` | 3991,94 | 3991,94 |
+| 1 | 120° | `normal` | `face` | 7926,14 | 7926,14 |
+| 1 | 120° | `normal` | `opposite` | 7868,40 | 7868,40 |
+| 1 | 120° | `reverse` | `face` | 8041,61 | 8041,61 |
+| 1 | 120° | `reverse` | `opposite` | 7983,87 | 7983,87 |
+| 1 | 135° | `normal` | `face` | 7893,55 | 7893,55 |
+| 1 | 135° | `normal` | `opposite` | 7852,12 | 7852,12 |
+| 1 | 135° | `reverse` | `face` | 8034,97 | 8034,97 |
+| 1 | 135° | `reverse` | `opposite` | 7993,55 | 7993,55 |
+| 2 | 120° | `normal` | `face` | 15726,06 | 15726,06 |
+| 0,5 | 135° | `reverse` | `opposite` | 3997,31 | 3997,31 |
+
+Otro ancho (`t` = 1, `face` salvo donde se indica):
+
+| base y borde | `θ` | dirección | cálculo | medido |
+|---|---|---|---|---|
+| 100 x 80, borde de 100 | 90° | `normal` | 10935,62 | 10935,62 |
+| 100 x 80, borde de 100 | 90° | `reverse` | 11035,62 | 11035,62 |
+| 100 x 80, borde de 100 | 60° | `normal` | 10852,28 | 10852,28 |
+| 100 x 80, borde de 100 | 60° | `reverse` | 10967,75 | 10967,75 |
+| 100 x 80, borde de 100 (`opposite`) | 60° | `reverse` | 10794,54 | 10794,54 |
+| 100 x 50, borde de 50 | 90° | `normal` | 6467,81 | 6467,81 |
+| 100 x 50, borde de 50 | 90° | `reverse` | 6517,81 | 6517,81 |
+| 100 x 50, borde de 50 | 60° | `normal` | 6426,14 | 6426,14 |
+| 100 x 50, borde de 50 | 60° | `reverse` | 6483,87 | 6483,87 |
+| 100 x 50, borde de 50 (`opposite`) | 60° | `normal` | 6339,54 | 6339,54 |
+
+**Largo mínimo según el ángulo** (`r` = 1 mm, `t` = 1 mm, `normal`, base de 100 x 50). Con `L` en
+0,9, 0,99, 1,01 y 1,1 veces el teórico: rechazado (exit 4, `brida_rechazada`) por debajo y aceptado por
+encima, en todos los ángulos; el volumen no cambia tras un rechazo. El umbral es `r·cot(θ/2)` con `face` y
+`(r + t)·cot(θ/2)` con `opposite`, a 45, 60, 90 y 120° (no se afinó más que a ±1 %).
+
+| `θ` | `face`: teórico | `opposite`: teórico | resultado |
+|---|---|---|---|
+| 45° | 2,414 mm | 4,828 mm | 0,99 rechaza; 1,01 y 1,1 aceptan |
+| 60° | 1,732 mm | 3,464 mm | 0,99 rechaza; 1,01 y 1,1 aceptan |
+| 90° | 1,000 mm | 2,000 mm | 0,99 rechaza; 1,01 y 1,1 aceptan |
+| 120° | 0,577 mm | 1,155 mm | 0,99 rechaza; 1,01 y 1,1 aceptan |
+
+Con una pared casi nula a 45° y 120° el **volumen baja** (la base recortada, `a·t·(k + t/sen θ)` con
+`normal`, pesa más que la pared y el doblez): la brida existe y su volumen coincide con la fórmula (por
+ejemplo, 45°, `face`, `L` = 2,4384 mm: 4973,01 mm3 contra 5000 de la base). Hasta 2026-11-27 el comando daba
+esos casos por `brida_sin_efecto` y los deshacía; ahora esa causa es solo para un volumen que no cambió.
+
+**Desarrollo (`flat-dxf --create`).** El DXF de una brida tiene 5 `LINE` (el contorno y la línea del
+doblez) y mide `a` por `b + s + (π − θ)·(r + K·t)`, con `K` = `NeutralFactor` (0,33) y `r` el radio
+usado, a la diezmilésima de mm:
+
+| caso | `b` | `s` | arco neutro | desarrollo calculado = medido |
+|---|---|---|---|---|
+| `t` 1, 90°, `normal`, `face` | 48,0000 | 29,0000 | 2,0892 | 79,0892 |
+| `t` 2, 60°, `reverse`, `face` | 48,2679 | 28,2679 | 3,4767 | 80,0126 |
+| `t` 1, 120°, `normal`, `face` | 48,2679 | 29,4226 | 1,3928 | 79,0834 |
+| `t` 0,5, 135°, `reverse`, `face` | 49,5858 | 29,5858 | 0,9150 | 80,0866 |
+| `t` 2, 90°, `normal`, `opposite` | 47,0000 | 27,0000 | 2,6075 | 76,6075 |
+
+El otro lado del DXF mide 100,0000 (`a`). Para medir la caja del DXF hay que leer solo la sección `ENTITIES`:
+el encabezado también trae pares de código 10 y 20 (sus extensiones) que ensanchan la caja.
 
 ### `se sheetmetal flat-dxf`
 

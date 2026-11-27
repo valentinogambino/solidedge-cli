@@ -6,6 +6,7 @@ documentos que crea ella.
 """
 
 import json
+import math
 
 import pytest
 from typer.testing import CliRunner
@@ -344,5 +345,172 @@ def test_brida_con_measure_por_la_cli(medida, direccion, volumen_mm3):
         assert r.exit_code == 0, sobre
         assert sobre["data"]["medida"] == medida
         assert sobre["data"]["volumen_despues"] * 1e9 == pytest.approx(volumen_mm3, abs=0.01)
+    finally:
+        _cerrar(nombre)
+
+
+def _volumen_de_brida_mm3(t, r, theta, largo, ancho, arista, direccion, medida):
+    """Regla medida en vivo: V = a*t*(b + s) + a*(pi - theta)/2*((r+t)^2 - r^2), en mm3."""
+    th = math.radians(theta)
+    cot = 1 / math.tan(th / 2)
+    s = largo - (r if medida == "face" else r + t) * cot
+    b = ancho - r * cot - (t / math.sin(th) if direccion == "normal" else 0)
+    return arista * t * (b + s) + arista * (math.pi - th) / 2 * ((r + t) ** 2 - r**2)
+
+
+def _base_sincronica(t_mm, largo=100, ancho=50, arista="larga"):
+    """Chapa nueva `largo x ancho x t_mm` con base sincrónica: (nombre, índice de la arista)."""
+    r, sobre = _correr("docs", "new", "sheetmetal")
+    assert r.exit_code == 0, sobre
+    nombre = sobre["data"]["nombre"]
+    d = ["--doc", nombre]
+    assert _correr("vars", "set", "MaterialThickness", f"{t_mm}mm", *d)[0].exit_code == 0
+    r, sobre = _correr("sketch", "rect", "--width", f"{largo}mm", "--height", f"{ancho}mm", *d)
+    assert r.exit_code == 0, sobre
+    r, sobre = _correr("sheetmetal", "tab", "--sync", *d)
+    assert r.exit_code == 0, sobre
+    r, sobre = _correr("edges", "list", "--units", "mm", *d)
+    rectas = [a for a in sobre["data"]["aristas"] if a["tipo"] == "linea" and a["longitud"] > 10]
+    elegir = max if arista == "larga" else min
+    return nombre, elegir(rectas, key=lambda a: a["longitud"])["indice"]
+
+
+def _brida(nombre, arista, largo_mm, angulo, direccion, medida, radio_mm=1):
+    return _correr(
+        "sheetmetal",
+        "flange",
+        "--edge",
+        str(arista),
+        "--length",
+        f"{largo_mm}mm",
+        "--angle",
+        str(angulo),
+        "--direction",
+        direccion,
+        "--measure",
+        medida,
+        "--radius",
+        f"{radio_mm}mm",
+        "--units",
+        "mm",
+        "--doc",
+        nombre,
+    )
+
+
+@pytest.mark.live
+@pytest.mark.parametrize(
+    ("espesor", "angulo", "direccion", "medida"),
+    [
+        (2, 90, "normal", "face"),
+        (2, 60, "reverse", "opposite"),
+        (0.5, 60, "normal", "face"),
+        (0.5, 90, "reverse", "opposite"),
+        (1, 120, "normal", "face"),
+        (1, 135, "reverse", "opposite"),
+    ],
+)
+def test_brida_con_otro_espesor_y_mas_de_90_grados(espesor, angulo, direccion, medida):
+    """Espesor 2 y 0,5 mm y ángulos de 120 y 135°: el volumen medido es el de la fórmula."""
+    nombre, arista = _base_sincronica(espesor)
+    try:
+        r, sobre = _brida(nombre, arista, 30, angulo, direccion, medida)
+        assert r.exit_code == 0, sobre
+        esperado = _volumen_de_brida_mm3(espesor, 1, angulo, 30, 50, 100, direccion, medida)
+        assert sobre["data"]["volumen_despues"] * 1e9 == pytest.approx(esperado, abs=0.01)
+    finally:
+        _cerrar(nombre)
+
+
+@pytest.mark.live
+@pytest.mark.parametrize(
+    ("largo", "ancho", "arista", "angulo", "direccion"),
+    [(100, 80, "larga", 60, "reverse"), (100, 50, "corta", 90, "normal")],
+)
+def test_brida_sobre_otro_ancho_de_base_y_sobre_el_borde_corto(
+    largo, ancho, arista, angulo, direccion
+):
+    nombre, indice = _base_sincronica(1, largo, ancho, arista)
+    try:
+        r, sobre = _brida(nombre, indice, 30, angulo, direccion, "face")
+        assert r.exit_code == 0, sobre
+        a, w = (largo, ancho) if arista == "larga" else (ancho, largo)
+        esperado = _volumen_de_brida_mm3(1, 1, angulo, 30, w, a, direccion, "face")
+        assert sobre["data"]["volumen_despues"] * 1e9 == pytest.approx(esperado, abs=0.01)
+    finally:
+        _cerrar(nombre)
+
+
+@pytest.mark.live
+@pytest.mark.parametrize(("angulo", "medida"), [(45, "face"), (60, "opposite"), (120, "face")])
+def test_brida_largo_minimo_fuera_de_90_grados(angulo, medida):
+    """El límite es radio*cot(ángulo/2) con `face` y (radio+espesor)*cot(ángulo/2) con `opposite`.
+
+    Un largo 1 % por debajo se rechaza sin cambiar el modelo; uno 1 % por encima se acepta, aunque
+    la pared sea casi nula y el volumen baje (45 y 120°: la base recortada pesa más que la pared).
+    """
+    nombre, arista = _base_sincronica(1)
+    try:
+        minimo = (1 if medida == "face" else 2) / math.tan(math.radians(angulo) / 2)
+        volumen = _correr("mass", "--density", "7850", "--doc", nombre)[1]["data"]["volumen"]
+        r, sobre = _brida(nombre, arista, round(minimo * 0.99, 4), angulo, "normal", medida)
+        assert r.exit_code == 4 and sobre["error"]["details"]["causa"] == "brida_rechazada", sobre
+        assert _correr("mass", "--density", "7850", "--doc", nombre)[1]["data"][
+            "volumen"
+        ] == pytest.approx(volumen, rel=1e-9)
+        largo = round(minimo * 1.01, 4)
+        r, sobre = _brida(nombre, arista, largo, angulo, "normal", medida)
+        assert r.exit_code == 0, sobre
+        esperado = _volumen_de_brida_mm3(1, 1, angulo, largo, 50, 100, "normal", medida)
+        assert sobre["data"]["volumen_despues"] * 1e9 == pytest.approx(esperado, abs=0.01)
+    finally:
+        _cerrar(nombre)
+
+
+def _desarrollo_del_dxf(ruta) -> tuple[float, float, dict[str, int]]:
+    """Caja (x, y) en mm y entidades de la sección ENTITIES (sin el encabezado del DXF)."""
+    lineas = [x.strip() for x in ruta.read_text(errors="ignore").splitlines()]
+    pares = list(zip(lineas[0::2], lineas[1::2], strict=False))
+    xs: list[float] = []
+    ys: list[float] = []
+    tipos: dict[str, int] = {}
+    en_entidades = False
+    for i, (codigo, valor) in enumerate(pares):
+        if codigo == "2" and i and pares[i - 1] == ("0", "SECTION"):
+            en_entidades = valor == "ENTITIES"
+        elif en_entidades and codigo == "0" and valor not in ("SECTION", "ENDSEC"):
+            tipos[valor] = tipos.get(valor, 0) + 1
+        elif en_entidades and codigo in ("10", "11"):
+            xs.append(float(valor))
+        elif en_entidades and codigo in ("20", "21"):
+            ys.append(float(valor))
+    return max(xs) - min(xs), max(ys) - min(ys), tipos
+
+
+@pytest.mark.live
+@pytest.mark.parametrize(
+    ("espesor", "angulo", "direccion"), [(2, 60, "reverse"), (1, 120, "normal")]
+)
+def test_desarrollo_de_una_brida_es_base_mas_pared_mas_arco_neutro(
+    tmp_path, espesor, angulo, direccion
+):
+    """DXF = 100 mm x (b + s + (pi - theta)*(r + K*t)), con K = `NeutralFactor` del documento."""
+    nombre, arista = _base_sincronica(espesor)
+    chapa = tmp_path / "desarrollada.psm"
+    try:
+        r, sobre = _brida(nombre, arista, 30, angulo, direccion, "face")
+        assert r.exit_code == 0, sobre
+        k = _correr("vars", "get", "NeutralFactor", "--doc", nombre)[1]["data"]["valor"]
+        assert _correr("docs", "save-as", str(chapa), nombre)[0].exit_code == 0
+        nombre = chapa.name
+        r, sobre = _correr("sheetmetal", "flat-dxf", "--create", "--doc", nombre)
+        assert r.exit_code == 0, sobre
+        th = math.radians(angulo)
+        cot = 1 / math.tan(th / 2)
+        b = 50 - cot - (espesor / math.sin(th) if direccion == "normal" else 0)
+        esperado = b + (30 - cot) + (math.pi - th) * (1 + k * espesor)
+        x, y, tipos = _desarrollo_del_dxf(tmp_path / "desarrollada.dxf")
+        assert tipos == {"LINE": 5}  # el contorno y la línea del doblez
+        assert sorted((x, y)) == pytest.approx([esperado, 100.0], abs=0.01)
     finally:
         _cerrar(nombre)

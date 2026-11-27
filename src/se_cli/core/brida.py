@@ -33,6 +33,15 @@ mira hacia donde se levanta la brida):
   valor menos `t/sen(angulo)` con `normal`; la pared de `reverse` no es más corta, la base sí es
   más larga (README, "se sheetmetal flange"). `--angle` es el ángulo entre la pared y la base: el
   doblez barre 180 - angulo.
+- Verificado en vivo el 2026-11-27 (unas 70 corridas, volumen calculado contra medido a la centésima
+  de mm3): espesores de 0,5, 1 y 2 mm (la variable `MaterialThickness`; `BendRadius` no la sigue),
+  ángulos de 45, 60, 90, 120 y 135° (Solid Edge acepta más de 90° y la fórmula sigue valiendo), base
+  de 100 x 50 y 100 x 80 y brida en el borde corto. El largo mínimo es `r*cot(angulo/2)` con `face` y
+  `(r+t)*cot(angulo/2)` con `opposite` a 45, 60, 90 y 120° (a +-1 %). Con una pared casi nula
+  a 45 y
+  120° el volumen baja (la base recortada pesa más que pared y doblez): la brida existe, así que el
+  criterio de `brida_sin_efecto` es que el volumen no cambie, no que no aumente. El desarrollo
+  (`flat-dxf --create`) mide `a` por `b + s + (pi - angulo)*(r + K*t)`, con `K` = `NeutralFactor`.
 - `InsideRadius` vacío toma la variable `BendRadius` del documento al momento de crear la brida;
   el comando la lee y la informa.
 - `BendAngle` se pasa en radianes.
@@ -254,10 +263,10 @@ def crear_brida(
             },
         ) from causa
     despues = _volumen(doc)
-    if antes is None or despues is None or despues - antes <= max(1e-15, abs(antes) * 1e-9):
+    if antes is None or despues is None or abs(despues - antes) <= max(1e-15, abs(antes) * 1e-9):
         deshecho = _deshacer(doc)
         raise ErrorCom(
-            "Solid Edge no levantó la brida (el volumen no aumentó)"
+            "Solid Edge no levantó la brida (el volumen no cambió)"
             + (": se deshizo." if deshecho else " y no se pudo deshacer: revisá el modelo."),
             details={
                 "causa": "brida_sin_efecto",
