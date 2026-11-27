@@ -323,6 +323,18 @@ def test_flange_sin_efecto_se_deshace_y_da_exit_4(cli, app_falsa, base_sync):
     assert base_sync.Models.Item(1).Flanges.Count == 0
 
 
+def test_flange_que_recorta_mas_base_de_la_que_suma_no_es_sin_efecto(cli, app_falsa, base_sync):
+    """Medido en vivo: a 45° o 120° con una pared casi nula el volumen baja y la brida existe."""
+    base_sync.brida_delta_volumen = -1e-8
+
+    r, sobre = cli("sheetmetal", "flange", "--edge", "9", "--length", "30mm")
+
+    assert r.exit_code == 0, sobre
+    assert sobre["data"]["volumen_despues"] < sobre["data"]["volumen_antes"]
+    assert not _llamadas(app_falsa, "Undo")
+    assert base_sync.Models.Item(1).Flanges.Count == 1
+
+
 def test_flange_sin_efecto_y_undo_que_falla_lo_dice(cli, base_sync):
     base_sync.brida_sin_efecto = True
     base_sync.fallar("Undo", com_error(0x80004005, "Error no especificado"))

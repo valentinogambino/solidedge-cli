@@ -153,7 +153,7 @@ def flange(
     """Creá una brida sobre una arista recta de una chapa (Flanges.AddSync).
 
     Exige una chapa con base creada en modo sincrónico (`se sheetmetal tab --sync`): con la base
-    ordenada da exit 6 (`causa: base_ordenada`). Mide el volumen antes y después; si no aumentó,
+    ordenada da exit 6 (`causa: base_ordenada`). Mide el volumen antes y después; si no cambió,
     deshace la operación y da exit 4 (`causa: brida_sin_efecto`). Arista no recta o argumento
     fuera de rango: exit 2; arista inexistente: exit 5.
     """

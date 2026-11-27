@@ -1884,7 +1884,9 @@ class BridasFalsas(OperacionesFalsas):
         if getattr(self.doc, "brida_rechazada", False):
             raise com_error(0x80020009, "Exception occurred.")
         sin_efecto = getattr(self.doc, "brida_sin_efecto", False)
-        operacion = self.agregar(0.0 if sin_efecto else largo * self.modelo.espesor * arista.largo)
+        delta = getattr(self.doc, "brida_delta_volumen", None)  # base recortada: puede ser < 0
+        volumen = largo * self.modelo.espesor * arista.largo if delta is None else delta
+        operacion = self.agregar(0.0 if sin_efecto else volumen)
         self.doc.ultima_a_deshacer = operacion
         return operacion
 
